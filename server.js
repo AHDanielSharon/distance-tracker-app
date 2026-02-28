@@ -5,16 +5,18 @@ const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const STORE_FILE = path.join(__dirname, 'data', 'store.json');
 
 /**
  * roomId -> {
- *   users: Map<userId, { id, name, lat, lng, updatedAt }>,
+ *   users: Map<userId, user>,
  *   clients: Set<ServerResponse>
  * }
  */
 const rooms = new Map();
 
 const toRad = (degrees) => (degrees * Math.PI) / 180;
+
 const json = (res, status, payload) => {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(payload));
@@ -22,6 +24,7 @@ const json = (res, status, payload) => {
 
 const sanitizeRoomId = (value) => String(value || '').trim().slice(0, 32);
 const sanitizeName = (value) => String(value || '').trim().slice(0, 24);
+const sanitizeDeviceId = (value) => String(value || '').trim().slice(0, 128);
 
 const haversineDistanceMeters = (a, b) => {
   const R = 6371000;
@@ -42,6 +45,44 @@ const getOrCreateRoom = (roomId) => {
     rooms.set(roomId, { users: new Map(), clients: new Set() });
   }
   return rooms.get(roomId);
+};
+
+const saveStore = () => {
+  const plain = {};
+  for (const [roomId, room] of rooms.entries()) {
+    plain[roomId] = { users: [...room.users.values()] };
+  }
+
+  fs.mkdirSync(path.dirname(STORE_FILE), { recursive: true });
+  fs.writeFileSync(STORE_FILE, JSON.stringify({ rooms: plain }, null, 2));
+};
+
+const loadStore = () => {
+  if (!fs.existsSync(STORE_FILE)) return;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
+    const storedRooms = parsed?.rooms || {};
+
+    for (const [roomId, roomData] of Object.entries(storedRooms)) {
+      const room = { users: new Map(), clients: new Set() };
+      for (const user of roomData.users || []) {
+        room.users.set(user.id, {
+          id: user.id,
+          deviceId: user.deviceId || null,
+          name: sanitizeName(user.name) || 'Anonymous',
+          lat: typeof user.lat === 'number' ? user.lat : null,
+          lng: typeof user.lng === 'number' ? user.lng : null,
+          accuracy: typeof user.accuracy === 'number' ? user.accuracy : null,
+          updatedAt: user.updatedAt || Date.now(),
+          lastSeenAt: user.lastSeenAt || Date.now(),
+          active: false,
+        });
+      }
+      rooms.set(roomId, room);
+    }
+  } catch {
+    // ignore invalid persisted file and start clean
+  }
 };
 
 const buildSnapshot = (roomId) => {
@@ -81,7 +122,6 @@ const broadcast = (roomId) => {
   const room = rooms.get(roomId);
   if (!room) return;
   const payload = `data: ${JSON.stringify(buildSnapshot(roomId))}\n\n`;
-
   for (const client of room.clients) {
     client.write(payload);
   }
@@ -136,6 +176,8 @@ const serveStatic = (req, res) => {
   });
 };
 
+loadStore();
+
 const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && req.url === '/health') {
@@ -147,24 +189,47 @@ const server = http.createServer(async (req, res) => {
       const body = await parseBody(req);
       const roomId = sanitizeRoomId(body.roomId);
       const name = sanitizeName(body.name) || 'Anonymous';
+      const deviceId = sanitizeDeviceId(body.deviceId);
 
       if (!roomId) {
         json(res, 400, { error: 'Room ID is required.' });
         return;
       }
 
-      const userId = crypto.randomUUID();
       const room = getOrCreateRoom(roomId);
-      room.users.set(userId, {
-        id: userId,
-        name,
-        lat: null,
-        lng: null,
-        accuracy: null,
-        updatedAt: Date.now(),
-      });
+      let user = null;
 
-      json(res, 200, { ok: true, roomId, userId, name });
+      if (deviceId) {
+        for (const existing of room.users.values()) {
+          if (existing.deviceId === deviceId) {
+            user = existing;
+            break;
+          }
+        }
+      }
+
+      if (!user) {
+        const userId = crypto.randomUUID();
+        user = {
+          id: userId,
+          deviceId: deviceId || null,
+          name,
+          lat: null,
+          lng: null,
+          accuracy: null,
+          updatedAt: Date.now(),
+          lastSeenAt: Date.now(),
+          active: true,
+        };
+        room.users.set(userId, user);
+      } else {
+        user.name = name;
+        user.active = true;
+        user.lastSeenAt = Date.now();
+      }
+
+      saveStore();
+      json(res, 200, { ok: true, roomId, userId: user.id, name: user.name, deviceId: user.deviceId });
       broadcast(roomId);
       return;
     }
@@ -189,6 +254,10 @@ const server = http.createServer(async (req, res) => {
       user.lng = lng;
       user.accuracy = Number.isNaN(accuracy) ? null : Math.max(0, accuracy);
       user.updatedAt = Date.now();
+      user.lastSeenAt = Date.now();
+      user.active = true;
+
+      saveStore();
       json(res, 200, { ok: true });
       broadcast(roomId);
       return;
@@ -199,13 +268,17 @@ const server = http.createServer(async (req, res) => {
       const roomId = sanitizeRoomId(body.roomId);
       const userId = String(body.userId || '');
       const room = rooms.get(roomId);
+      const user = room?.users.get(userId);
 
-      if (room?.users.delete(userId)) {
+      if (user) {
+        user.active = false;
+        user.lastSeenAt = Date.now();
+        saveStore();
         broadcast(roomId);
-        cleanupRoom(roomId);
       }
 
       json(res, 200, { ok: true });
+      cleanupRoom(roomId);
       return;
     }
 

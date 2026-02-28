@@ -17,7 +17,7 @@
     <main class="app-shell">
       <section class="panel join-panel glass">
         <h1>⚡ Neon Distance Room</h1>
-        <p>Create or join a live room and track everyone in real time.</p>
+        <p>Create/join a room, track people live, and see route + ETA.</p>
         <form id="join-form">
           <label>
             Your Name
@@ -30,14 +30,34 @@
           <button type="submit">Enter Room</button>
         </form>
         <p id="status" class="status">Not connected</p>
+        <p class="hint">Note: real-world accuracy depends on GPS quality (phone, environment, signal).</p>
       </section>
 
       <section class="panel map-panel glass hidden" id="tracker-section">
         <header class="top-row">
           <h2 id="room-title">Room</h2>
-          <span id="live-indicator">● LIVE</span>
+          <div class="actions">
+            <button id="recenter-btn" type="button">Recenter All</button>
+            <span id="live-indicator">● LIVE</span>
+          </div>
         </header>
+
         <div id="map"></div>
+
+        <section class="route-box">
+          <h3>Route to Person</h3>
+          <div class="route-controls">
+            <select id="target-user"></select>
+            <select id="travel-mode">
+              <option value="driving">🚗 Driving</option>
+              <option value="cycling">🚴 Cycling</option>
+              <option value="walking">🚶 Walking</option>
+            </select>
+            <button id="route-btn" type="button">Show Route + ETA</button>
+          </div>
+          <p id="route-info">Select a person and mode to calculate route.</p>
+        </section>
+
         <div class="lists">
           <div>
             <h3>People in Room</h3>

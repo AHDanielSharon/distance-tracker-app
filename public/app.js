@@ -4,6 +4,11 @@ const trackerSection = document.getElementById('tracker-section');
 const roomTitle = document.getElementById('room-title');
 const peopleList = document.getElementById('people-list');
 const distanceList = document.getElementById('distance-list');
+const recenterBtn = document.getElementById('recenter-btn');
+const targetUser = document.getElementById('target-user');
+const travelMode = document.getElementById('travel-mode');
+const routeBtn = document.getElementById('route-btn');
+const routeInfo = document.getElementById('route-info');
 
 let roomId = '';
 let userId = '';
@@ -11,17 +16,37 @@ let map;
 let myWatchId;
 let events;
 let mapReady = false;
+let routeLayer = null;
+let usersSnapshot = [];
 const markers = new Map();
+const deviceIdKey = 'distance-tracker-device-id';
+
+const getDeviceId = () => {
+  let id = localStorage.getItem(deviceIdKey);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(deviceIdKey, id);
+  }
+  return id;
+};
 
 const formatDistance = (meters) => {
-  if (meters >= 1000) return `${(meters / 1000).toFixed(3)} km`;
+  if (meters >= 1000) return `${(meters / 1000).toFixed(2)} km`;
   return `${Math.round(meters)} m`;
 };
 
 const formatAccuracy = (meters) => {
-  if (typeof meters !== 'number' || Number.isNaN(meters)) return 'N/A';
+  if (!meters) return 'N/A';
   if (meters >= 1000) return `±${(meters / 1000).toFixed(2)} km`;
   return `±${Math.round(meters)} m`;
+};
+
+const formatDuration = (seconds) => {
+  const mins = Math.round(seconds / 60);
+  if (mins < 60) return `${mins} min`;
+  const hours = Math.floor(mins / 60);
+  const rem = mins % 60;
+  return `${hours}h ${rem}m`;
 };
 
 const updateStatus = (text, isError = false) => {
@@ -32,44 +57,36 @@ const updateStatus = (text, isError = false) => {
 const ensureMap = () => {
   if (mapReady) return true;
   if (typeof L === 'undefined') {
-    updateStatus('Map failed to load. Check internet/CDN access and reload.', true);
+    updateStatus('Map failed to load.', true);
     return false;
   }
 
   map = L.map('map', { zoomControl: false }).setView([20, 0], 2);
   L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-  const street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 20,
-    attribution: '&copy; OpenStreetMap contributors',
-  });
+  const street = L.tileLayer(
+    'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { maxZoom: 20 }
+  );
 
   const satellite = L.tileLayer(
     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    {
-      maxZoom: 20,
-      attribution: 'Tiles &copy; Esri',
-    },
+    { maxZoom: 20 }
   );
 
   street.addTo(map);
-  L.control
-    .layers(
-      {
-        'Street View': street,
-        'Satellite View': satellite,
-      },
-      {},
-      { collapsed: false, position: 'topright' },
-    )
-    .addTo(map);
+  L.control.layers(
+    { Street: street, Satellite: satellite },
+    {},
+    { collapsed: false }
+  ).addTo(map);
 
   mapReady = true;
   return true;
 };
 
 const upsertMarker = (user) => {
-  if (!mapReady || typeof user.lat !== 'number' || typeof user.lng !== 'number') return;
+  if (!mapReady || typeof user.lat !== 'number') return;
 
   if (!markers.has(user.id)) {
     markers.set(user.id, L.marker([user.lat, user.lng]).addTo(map));
@@ -81,8 +98,7 @@ const upsertMarker = (user) => {
 };
 
 const removeMissingMarkers = (users) => {
-  if (!mapReady) return;
-  const ids = new Set(users.map((u) => u.id));
+  const ids = new Set(users.map(u => u.id));
   for (const [id, marker] of markers.entries()) {
     if (!ids.has(id)) {
       map.removeLayer(marker);
@@ -92,134 +108,127 @@ const removeMissingMarkers = (users) => {
 };
 
 const renderRoom = ({ users, distances }) => {
+  usersSnapshot = users;
   peopleList.innerHTML = '';
   distanceList.innerHTML = '';
 
-  users.forEach((user) => {
-    const item = document.createElement('li');
-    const hasLocation = typeof user.lat === 'number' && typeof user.lng === 'number';
-    const accuracyText = hasLocation ? ` (${formatAccuracy(user.accuracy)})` : '';
-    item.textContent = `${user.name}${user.id === userId ? ' (You)' : ''} — ${
-      hasLocation ? `${user.lat.toFixed(6)}, ${user.lng.toFixed(6)}${accuracyText}` : 'waiting for GPS...'
-    }`;
-    peopleList.appendChild(item);
+  users.forEach(user => {
+    const li = document.createElement('li');
+    const hasLoc = typeof user.lat === 'number';
+    li.textContent = hasLoc
+      ? `${user.name}${user.id === userId ? ' (You)' : ''} — ${user.lat.toFixed(6)}, ${user.lng.toFixed(6)} (${formatAccuracy(user.accuracy)})`
+      : `${user.name} — waiting for GPS...`;
+
+    peopleList.appendChild(li);
     upsertMarker(user);
   });
 
   removeMissingMarkers(users);
 
-  if (distances.length === 0) {
-    const li = document.createElement('li');
-    li.textContent = 'Need at least two active locations to compute distance.';
-    distanceList.appendChild(li);
-  } else {
-    distances
-      .sort((a, b) => a.meters - b.meters)
-      .forEach((distance) => {
-        const li = document.createElement('li');
-        const uncertainty =
-          typeof distance.errorMeters === 'number' ? ` (uncertainty ${formatAccuracy(distance.errorMeters)})` : '';
-        li.textContent = `${distance.names[0]} ↔ ${distance.names[1]}: ${formatDistance(distance.meters)}${uncertainty}`;
-        distanceList.appendChild(li);
-      });
+  if (!mapReady) return;
+
+  const valid = users.filter(u => typeof u.lat === 'number');
+  if (valid.length > 0) {
+    const bounds = L.latLngBounds(valid.map(u => [u.lat, u.lng]));
+    map.fitBounds(bounds.pad(0.25));
   }
 
-  if (!mapReady) return;
-  const usersWithCoords = users.filter((u) => typeof u.lat === 'number' && typeof u.lng === 'number');
-  if (usersWithCoords.length > 0) {
-    const bounds = L.latLngBounds(usersWithCoords.map((u) => [u.lat, u.lng]));
-    map.fitBounds(bounds.pad(0.25), { animate: true, duration: 0.6 });
+  if (distances.length === 0) {
+    const li = document.createElement('li');
+    li.textContent = 'Need at least two active locations.';
+    distanceList.appendChild(li);
+  } else {
+    distances.forEach(d => {
+      const li = document.createElement('li');
+      li.textContent =
+        `${d.names[0]} ↔ ${d.names[1]}: ${formatDistance(d.meters)}`;
+      distanceList.appendChild(li);
+    });
   }
 };
 
 const apiPost = async (path, payload) => {
-  const response = await fetch(path, {
+  const res = await fetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(payload)
   });
-
-  const body = await response.json();
-  if (!response.ok) {
-    throw new Error(body.error || 'API error');
-  }
-
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || 'API error');
   return body;
 };
 
 const beginLocationTracking = () => {
   if (!navigator.geolocation) {
-    updateStatus('Geolocation is not supported in this browser.', true);
+    updateStatus('Geolocation not supported', true);
     return;
   }
 
   myWatchId = navigator.geolocation.watchPosition(
-    async (position) => {
+    async pos => {
       try {
         await apiPost('/api/location', {
           roomId,
           userId,
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-          accuracy: position.coords.accuracy,
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy
         });
-        updateStatus(`Streaming live location (${formatAccuracy(position.coords.accuracy)}).`);
-      } catch (error) {
-        updateStatus(`Failed to push location: ${error.message}`, true);
+      } catch (e) {
+        updateStatus(e.message, true);
       }
     },
-    (error) => updateStatus(`Location error: ${error.message}`, true),
-    { enableHighAccuracy: true, maximumAge: 500, timeout: 10000 },
+    err => updateStatus(err.message, true),
+    { enableHighAccuracy: true }
   );
 };
 
 const subscribeRoomStream = () => {
   if (events) events.close();
-  events = new EventSource(`/api/events?roomId=${encodeURIComponent(roomId)}`);
-
-  events.onmessage = (event) => {
-    renderRoom(JSON.parse(event.data));
-  };
-
-  events.onerror = () => {
-    updateStatus('Live stream disconnected. Trying to reconnect...', true);
-  };
+  events = new EventSource(`/api/events?roomId=${roomId}`);
+  events.onmessage = e => renderRoom(JSON.parse(e.data));
 };
 
-joinForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
+joinForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+
   const name = document.getElementById('name-input').value.trim();
   roomId = document.getElementById('room-input').value.trim();
 
   if (!name || !roomId) {
-    updateStatus('Name and room ID are required.', true);
+    updateStatus('Name and room ID required', true);
     return;
   }
 
   try {
-    const joined = await apiPost('/api/join', { roomId, name });
+    const joined = await apiPost('/api/join', {
+      roomId,
+      name,
+      deviceId: getDeviceId()
+    });
+
     roomId = joined.roomId;
     userId = joined.userId;
 
     trackerSection.classList.remove('hidden');
     roomTitle.textContent = `Room: ${roomId}`;
 
-    if (!ensureMap()) return;
-    setTimeout(() => map.invalidateSize(), 50);
-
-    if (typeof myWatchId === 'number') navigator.geolocation.clearWatch(myWatchId);
+    ensureMap();
     subscribeRoomStream();
     beginLocationTracking();
-    updateStatus(`Joined room ${roomId} as ${joined.name}`);
-  } catch (error) {
-    updateStatus(error.message, true);
+
+    updateStatus(`Joined ${roomId}`);
+  } catch (err) {
+    updateStatus(err.message, true);
   }
 });
 
 window.addEventListener('beforeunload', () => {
   if (roomId && userId && navigator.sendBeacon) {
-    navigator.sendBeacon('/api/leave', JSON.stringify({ roomId, userId }));
+    navigator.sendBeacon('/api/leave',
+      JSON.stringify({ roomId, userId })
+    );
   }
 });
 
-updateStatus('Ready. Enter a room ID and click Enter Room.');
+updateStatus('Ready. Enter a room ID.');
