@@ -16,6 +16,9 @@ const installBtn = document.getElementById('install-btn');
 const shareLinkBox = document.getElementById('share-link-box');
 const shareLinkInput = document.getElementById('share-link');
 const copyLinkBtn = document.getElementById('copy-link-btn');
+const whatsappShareBtn = document.getElementById('whatsapp-share-btn');
+const nameInput = document.getElementById('name-input');
+const roomInput = document.getElementById('room-input');
 
 let roomId = '';
 let userId = '';
@@ -31,8 +34,11 @@ let navigating = false;
 let activeStepIndex = 0;
 let lastVoiceText = '';
 let deferredInstallPrompt = null;
+let autoJoinAttempted = false;
+
 const markers = new Map();
 const deviceIdKey = 'distance-tracker-device-id';
+const preferredNameKey = 'distance-tracker-preferred-name';
 
 const PROFILE_MAP = {
   driving: { profile: 'driving', factor: 1, label: 'Car' },
@@ -75,19 +81,20 @@ const formatLastSeen = (timestamp) => {
   return `${Math.floor(sec / 3600)}h ago`;
 };
 
-
-
 const urlParams = new URLSearchParams(window.location.search);
 const linkedRoomId = urlParams.get('room') || '';
 const linkedToken = urlParams.get('token') || '';
+
 if (linkedRoomId) {
-  const roomInput = document.getElementById('room-input');
   roomInput.value = linkedRoomId;
   roomInput.readOnly = true;
   roomInput.title = 'Room locked by invite link';
 }
-if (linkedToken) {
-  inviteToken = linkedToken;
+if (linkedToken) inviteToken = linkedToken;
+
+const storedName = localStorage.getItem(preferredNameKey) || '';
+if (storedName) {
+  nameInput.value = storedName;
 }
 
 if ('serviceWorker' in navigator) {
@@ -335,7 +342,7 @@ const selectedTargetIds = () => [...targetUsers.querySelectorAll('input[type="ch
 
 const routeUrlForTargets = (cfg, coords) => {
   if (coords.length <= 2) {
-    return `https://router.project-osrm.org/route/v1/${cfg.profile}/${coords.map((c) => `${c[0]},${c[1]}`).join(';')}?overview=full&geometries=geojson&steps=true`; 
+    return `https://router.project-osrm.org/route/v1/${cfg.profile}/${coords.map((c) => `${c[0]},${c[1]}`).join(';')}?overview=full&geometries=geojson&steps=true`;
   }
 
   return `https://router.project-osrm.org/trip/v1/${cfg.profile}/${coords.map((c) => `${c[0]},${c[1]}`).join(';')}?overview=full&geometries=geojson&steps=true&source=first&roundtrip=false`;
@@ -409,35 +416,44 @@ const stopNavigation = () => {
   routeInfo.textContent = 'Navigation stopped.';
 };
 
+const joinCurrentRoom = async () => {
+  const name = nameInput.value.trim();
+  roomId = roomInput.value.trim();
+
+  if (!name || !roomId) {
+    updateStatus('Name and room ID are required.', true);
+    return;
+  }
+
+  localStorage.setItem(preferredNameKey, name);
+
+  const joined = await apiPost('/api/join', { roomId, name, deviceId: getDeviceId(), inviteToken });
+  roomId = joined.roomId;
+  userId = joined.userId;
+  inviteToken = joined.inviteToken || inviteToken;
+
+  if (joined.inviteLink) {
+    shareLinkInput.value = joined.inviteLink;
+    shareLinkBox.classList.remove('hidden');
+    window.history.replaceState({}, '', `/?room=${encodeURIComponent(roomId)}&token=${encodeURIComponent(inviteToken)}`);
+  }
+
+  trackerSection.classList.remove('hidden');
+  roomTitle.textContent = `Room: ${roomId}`;
+
+  if (!ensureMap()) return;
+  setTimeout(() => map.invalidateSize(), 50);
+
+  if (typeof myWatchId === 'number') navigator.geolocation.clearWatch(myWatchId);
+  subscribeRoomStream();
+  beginLocationTracking();
+  updateStatus(`Joined room ${roomId} as ${joined.name}`);
+};
+
 joinForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const name = document.getElementById('name-input').value.trim();
-  roomId = document.getElementById('room-input').value.trim();
-
-  if (!name || !roomId) return updateStatus('Name and room ID are required.', true);
-
   try {
-    const joined = await apiPost('/api/join', { roomId, name, deviceId: getDeviceId(), inviteToken });
-    roomId = joined.roomId;
-    userId = joined.userId;
-    inviteToken = joined.inviteToken || inviteToken;
-
-    if (joined.inviteLink) {
-      shareLinkInput.value = joined.inviteLink;
-      shareLinkBox.classList.remove('hidden');
-      window.history.replaceState({}, '', `/?room=${encodeURIComponent(roomId)}&token=${encodeURIComponent(inviteToken)}`);
-    }
-
-    trackerSection.classList.remove('hidden');
-    roomTitle.textContent = `Room: ${roomId}`;
-
-    if (!ensureMap()) return;
-    setTimeout(() => map.invalidateSize(), 50);
-
-    if (typeof myWatchId === 'number') navigator.geolocation.clearWatch(myWatchId);
-    subscribeRoomStream();
-    beginLocationTracking();
-    updateStatus(`Joined room ${roomId} as ${joined.name}`);
+    await joinCurrentRoom();
   } catch (error) {
     updateStatus(error.message, true);
   }
@@ -449,7 +465,6 @@ vehicleMode.addEventListener('change', () => mapReady && selectedTargetIds().len
 startNavBtn.addEventListener('click', startNavigation);
 stopNavBtn.addEventListener('click', stopNavigation);
 
-
 copyLinkBtn.addEventListener('click', async () => {
   if (!shareLinkInput.value) return;
   try {
@@ -458,6 +473,12 @@ copyLinkBtn.addEventListener('click', async () => {
   } catch {
     updateStatus('Could not copy automatically. Please copy the link manually.', true);
   }
+});
+
+whatsappShareBtn.addEventListener('click', () => {
+  if (!shareLinkInput.value) return;
+  const message = encodeURIComponent(`Join my private Distance Tracker room: ${shareLinkInput.value}`);
+  window.open(`https://wa.me/?text=${message}`, '_blank');
 });
 
 installBtn.addEventListener('click', async () => {
@@ -474,10 +495,24 @@ installBtn.addEventListener('click', async () => {
   }
 });
 
-
 window.addEventListener('beforeunload', () => {
   if (roomId && userId && navigator.sendBeacon) navigator.sendBeacon('/api/leave', JSON.stringify({ roomId, userId }));
   window.speechSynthesis?.cancel?.();
+});
+
+window.addEventListener('load', async () => {
+  if (linkedRoomId && linkedToken && !autoJoinAttempted) {
+    autoJoinAttempted = true;
+    if (!nameInput.value.trim()) {
+      nameInput.value = `Guest-${crypto.randomUUID().slice(0, 6)}`;
+    }
+    try {
+      await joinCurrentRoom();
+      updateStatus('Joined directly from private invite link.');
+    } catch (error) {
+      updateStatus(`Invite link join failed: ${error.message}`, true);
+    }
+  }
 });
 
 updateStatus('Ready. Enter a room ID and click Enter Room.');

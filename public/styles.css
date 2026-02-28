@@ -17,6 +17,7 @@ button { cursor: pointer; font-weight: 700; }
 .install-btn { margin-top: 8px; width: 180px; }
 .share-link-box { margin-top: 12px; display: grid; gap: 8px; }
 .share-link-box input { width: 100%; }
+.share-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .map-panel { display: grid; gap: 14px; }
 .top-row { display: flex; justify-content: space-between; align-items: center; }
 .actions { display: flex; gap: 10px; align-items: center; }
