@@ -11,6 +11,8 @@
       crossorigin=""
     />
     <link rel="stylesheet" href="styles.css" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#0e142c" />
   </head>
   <body>
     <div class="background-glow"></div>
@@ -24,6 +26,7 @@
           <button type="submit">Enter Room</button>
         </form>
         <p id="status" class="status">Not connected</p>
+        <button id="install-btn" type="button" class="install-btn hidden">Install App</button>
         <p class="hint">GPS has physical limits; uncertainty is shown so route/distance quality is transparent.</p>
       </section>
 

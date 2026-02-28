@@ -25,6 +25,7 @@ const json = (res, status, payload) => {
 const sanitizeRoomId = (value) => String(value || '').trim().slice(0, 32);
 const sanitizeName = (value) => String(value || '').trim().slice(0, 24);
 const sanitizeDeviceId = (value) => String(value || '').trim().slice(0, 128);
+const normalizeName = (value) => sanitizeName(value).toLowerCase();
 
 const haversineDistanceMeters = (a, b) => {
   const R = 6371000;
@@ -152,6 +153,8 @@ const contentTypeFor = (filePath) => {
   if (filePath.endsWith('.css')) return 'text/css; charset=utf-8';
   if (filePath.endsWith('.js')) return 'application/javascript; charset=utf-8';
   if (filePath.endsWith('.json')) return 'application/json; charset=utf-8';
+  if (filePath.endsWith('.webmanifest')) return 'application/manifest+json; charset=utf-8';
+  if (filePath.endsWith('.svg')) return 'image/svg+xml';
   return 'text/plain; charset=utf-8';
 };
 
@@ -209,6 +212,16 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (!user) {
+        const wantedName = normalizeName(name);
+        for (const existing of room.users.values()) {
+          if (normalizeName(existing.name) === wantedName) {
+            user = existing;
+            break;
+          }
+        }
+      }
+
+      if (!user) {
         const userId = crypto.randomUUID();
         user = {
           id: userId,
@@ -223,8 +236,13 @@ const server = http.createServer(async (req, res) => {
         };
         room.users.set(userId, user);
       } else {
+        user.deviceId = deviceId || user.deviceId || null;
         user.name = name;
+        user.lat = null;
+        user.lng = null;
+        user.accuracy = null;
         user.active = true;
+        user.updatedAt = Date.now();
         user.lastSeenAt = Date.now();
       }
 

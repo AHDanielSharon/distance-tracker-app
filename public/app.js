@@ -12,6 +12,7 @@ const stopNavBtn = document.getElementById('stop-nav-btn');
 const routeInfo = document.getElementById('route-info');
 const navSteps = document.getElementById('nav-steps');
 const targetUsers = document.getElementById('target-users');
+const installBtn = document.getElementById('install-btn');
 
 let roomId = '';
 let userId = '';
@@ -25,6 +26,7 @@ let latestRoute = null;
 let navigating = false;
 let activeStepIndex = 0;
 let lastVoiceText = '';
+let deferredInstallPrompt = null;
 const markers = new Map();
 const deviceIdKey = 'distance-tracker-device-id';
 
@@ -68,6 +70,27 @@ const formatLastSeen = (timestamp) => {
   if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
   return `${Math.floor(sec / 3600)}h ago`;
 };
+
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/service-worker.js').catch(() => {
+      updateStatus('Offline install support unavailable in this browser.', true);
+    });
+  });
+}
+
+window.addEventListener('beforeinstallprompt', (event) => {
+  event.preventDefault();
+  deferredInstallPrompt = event;
+  installBtn.classList.remove('hidden');
+});
+
+window.addEventListener('appinstalled', () => {
+  deferredInstallPrompt = null;
+  installBtn.classList.add('hidden');
+  updateStatus('App installed successfully.');
+});
 
 const chooseVehicle = (meters) => {
   if (meters < 700) return 'walking';
@@ -400,6 +423,21 @@ routeBtn.addEventListener('click', () => mapReady && drawRoute());
 vehicleMode.addEventListener('change', () => mapReady && selectedTargetIds().length > 0 && drawRoute(true));
 startNavBtn.addEventListener('click', startNavigation);
 stopNavBtn.addEventListener('click', stopNavigation);
+
+installBtn.addEventListener('click', async () => {
+  if (!deferredInstallPrompt) {
+    updateStatus('Install prompt is not available on this device/browser.', true);
+    return;
+  }
+  deferredInstallPrompt.prompt();
+  const choice = await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  installBtn.classList.add('hidden');
+  if (choice.outcome !== 'accepted') {
+    updateStatus('Install cancelled by user.', true);
+  }
+});
+
 
 window.addEventListener('beforeunload', () => {
   if (roomId && userId && navigator.sendBeacon) navigator.sendBeacon('/api/leave', JSON.stringify({ roomId, userId }));
