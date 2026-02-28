@@ -1,100 +1,30 @@
 :root {
   --panel: rgba(14, 20, 44, 0.72);
   --text: #ebf5ff;
-  --cyan: #38f3ff;
-  --purple: #b13fff;
 }
-
 * { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  min-height: 100vh;
-  font-family: 'Inter', 'Segoe UI', sans-serif;
-  color: var(--text);
-  background: radial-gradient(circle at 20% 10%, #15225c 0%, #070812 30%, #020208 100%);
-}
-
-.background-glow {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background:
-    radial-gradient(circle at 15% 20%, rgba(56, 243, 255, 0.2), transparent 40%),
-    radial-gradient(circle at 85% 18%, rgba(255, 62, 216, 0.15), transparent 35%),
-    radial-gradient(circle at 50% 85%, rgba(177, 63, 255, 0.16), transparent 35%);
-}
-
-.app-shell {
-  position: relative;
-  z-index: 1;
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 24px;
-  display: grid;
-  gap: 20px;
-}
-
-.glass {
-  background: var(--panel);
-  border: 1px solid rgba(56, 243, 255, 0.35);
-  border-radius: 20px;
-  backdrop-filter: blur(12px);
-  box-shadow: 0 0 24px rgba(56, 243, 255, 0.16), 0 0 34px rgba(177, 63, 255, 0.2);
-}
-
+body { margin: 0; min-height: 100vh; font-family: 'Inter', 'Segoe UI', sans-serif; color: var(--text); background: radial-gradient(circle at 20% 10%, #15225c 0%, #070812 30%, #020208 100%); }
+.background-glow { position: fixed; inset: 0; pointer-events: none; z-index: 0; background: radial-gradient(circle at 15% 20%, rgba(56, 243, 255, 0.2), transparent 40%), radial-gradient(circle at 85% 18%, rgba(255, 62, 216, 0.15), transparent 35%), radial-gradient(circle at 50% 85%, rgba(177, 63, 255, 0.16), transparent 35%); }
+.app-shell { position: relative; z-index: 1; max-width: 1280px; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
+.glass { background: var(--panel); border: 1px solid rgba(56, 243, 255, 0.35); border-radius: 20px; backdrop-filter: blur(12px); box-shadow: 0 0 24px rgba(56, 243, 255, 0.16), 0 0 34px rgba(177, 63, 255, 0.2); }
 .panel { padding: 20px; }
-
 form { display: grid; gap: 12px; }
 label { display: grid; gap: 6px; }
-
-input, button, select {
-  border-radius: 10px;
-  border: 1px solid rgba(56, 243, 255, 0.55);
-  background: rgba(8, 12, 32, 0.88);
-  color: var(--text);
-  padding: 10px 12px;
-  font-size: 0.95rem;
-}
-
+input, button, select { border-radius: 10px; border: 1px solid rgba(56, 243, 255, 0.55); background: rgba(8, 12, 32, 0.88); color: var(--text); padding: 10px 12px; font-size: 0.95rem; }
 button { cursor: pointer; font-weight: 700; }
-
 #status { font-weight: 700; }
 .hint { color: #b9c9eb; font-size: 0.88rem; }
-
 .map-panel { display: grid; gap: 14px; }
 .top-row { display: flex; justify-content: space-between; align-items: center; }
 .actions { display: flex; gap: 10px; align-items: center; }
 #live-indicator { color: #7bff89; text-shadow: 0 0 10px #7bff89; font-weight: 700; }
-
-#map {
-  width: 100%;
-  min-height: 500px;
-  border-radius: 14px;
-  border: 1px solid rgba(56, 243, 255, 0.42);
-  overflow: hidden;
-}
-
-.route-box {
-  border: 1px solid rgba(56, 243, 255, 0.35);
-  border-radius: 12px;
-  padding: 12px;
-  background: rgba(8, 14, 36, 0.7);
-}
-.route-controls { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; }
-
-.lists {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 12px;
-}
-
+#map { width: 100%; min-height: 520px; border-radius: 14px; border: 1px solid rgba(56, 243, 255, 0.42); overflow: hidden; }
+.route-box { border: 1px solid rgba(56, 243, 255, 0.35); border-radius: 12px; padding: 12px; background: rgba(8, 14, 36, 0.7); display: grid; gap: 10px; }
+.route-controls { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; }
+.target-users { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px; }
+.target-item { display: flex; align-items: center; gap: 8px; border: 1px solid rgba(56, 243, 255, 0.25); border-radius: 8px; padding: 6px 8px; }
+.nav-steps { margin: 0; padding-left: 18px; max-height: 170px; overflow: auto; }
+.lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
 ul { margin: 0; padding-left: 18px; display: grid; gap: 8px; }
 .hidden { display: none; }
-
-.leaflet-control-layers {
-  background: rgba(6, 11, 30, 0.9);
-  border: 1px solid rgba(56, 243, 255, 0.5);
-  color: #dff4ff;
-}
+.leaflet-control-layers { background: rgba(6, 11, 30, 0.9); border: 1px solid rgba(56, 243, 255, 0.5); color: #dff4ff; }

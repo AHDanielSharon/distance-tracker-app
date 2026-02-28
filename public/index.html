@@ -17,20 +17,14 @@
     <main class="app-shell">
       <section class="panel join-panel glass">
         <h1>⚡ Neon Distance Room</h1>
-        <p>Create/join a room, track people live, and see route + ETA.</p>
+        <p>Create/join a room, track people live, and navigate routes like maps apps.</p>
         <form id="join-form">
-          <label>
-            Your Name
-            <input id="name-input" type="text" maxlength="24" required placeholder="e.g. Alex" />
-          </label>
-          <label>
-            Room ID
-            <input id="room-input" type="text" maxlength="32" required placeholder="e.g. city-run-crew" />
-          </label>
+          <label>Your Name<input id="name-input" type="text" maxlength="24" required placeholder="e.g. Alex" /></label>
+          <label>Room ID<input id="room-input" type="text" maxlength="32" required placeholder="e.g. city-run-crew" /></label>
           <button type="submit">Enter Room</button>
         </form>
         <p id="status" class="status">Not connected</p>
-        <p class="hint">Note: real-world accuracy depends on GPS quality (phone, environment, signal).</p>
+        <p class="hint">GPS has physical limits; app now shows uncertainty and best vehicle recommendation.</p>
       </section>
 
       <section class="panel map-panel glass hidden" id="tracker-section">
@@ -45,17 +39,24 @@
         <div id="map"></div>
 
         <section class="route-box">
-          <h3>Route to Person</h3>
+          <h3>Smart Route Planner</h3>
           <div class="route-controls">
-            <select id="target-user"></select>
-            <select id="travel-mode">
-              <option value="driving">🚗 Driving</option>
-              <option value="cycling">🚴 Cycling</option>
+            <select id="vehicle-mode">
+              <option value="auto">🤖 Auto (Recommended)</option>
+              <option value="driving">🚗 Car</option>
+              <option value="motorcycle">🏍️ Motorcycle</option>
+              <option value="truck">🚚 Truck</option>
+              <option value="bus">🚌 Bus</option>
+              <option value="cycling">🚴 Bicycle</option>
+              <option value="scooter">🛴 Scooter</option>
               <option value="walking">🚶 Walking</option>
             </select>
-            <button id="route-btn" type="button">Show Route + ETA</button>
+            <button id="route-btn" type="button">Build Route</button>
+            <button id="start-nav-btn" type="button">Start Navigation</button>
           </div>
-          <p id="route-info">Select a person and mode to calculate route.</p>
+          <div id="target-users" class="target-users"></div>
+          <p id="route-info">Choose one or many people, then build route.</p>
+          <ol id="nav-steps" class="nav-steps"></ol>
         </section>
 
         <div class="lists">
