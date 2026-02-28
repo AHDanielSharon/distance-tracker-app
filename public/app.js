@@ -49,6 +49,17 @@ const formatDuration = (seconds) => {
   return `${hours}h ${rem}m`;
 };
 
+const formatLastSeen = (timestamp) => {
+  if (!timestamp) return 'unknown';
+  const diff = Math.max(0, Date.now() - timestamp);
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  return `${hr}h ago`;
+};
+
 const updateStatus = (text, isError = false) => {
   statusLabel.textContent = text;
   statusLabel.style.color = isError ? '#ff7ca5' : '#72ffe4';
@@ -102,7 +113,7 @@ const upsertMarker = (user) => {
 
   const marker = markers.get(user.id);
   marker.setLatLng([user.lat, user.lng]);
-  const state = user.active ? 'online' : 'offline';
+  const state = user.active ? 'online' : `last seen ${formatLastSeen(user.lastSeenAt)}`;
   marker.bindPopup(`${user.name}${user.id === userId ? ' (You)' : ''} • ${state}`);
 };
 
@@ -141,7 +152,7 @@ const syncRouteTargets = (users) => {
   for (const user of options) {
     const opt = document.createElement('option');
     opt.value = user.id;
-    opt.textContent = `${user.name}${user.active ? '' : ' (offline / last seen)'}`;
+    opt.textContent = `${user.name}${user.active ? '' : ` (last seen ${formatLastSeen(user.lastSeenAt)})`}`;
     targetUser.appendChild(opt);
   }
 
@@ -158,7 +169,7 @@ const renderRoom = ({ users, distances }) => {
     const item = document.createElement('li');
     const hasLocation = typeof user.lat === 'number' && typeof user.lng === 'number';
     const accuracyText = hasLocation ? ` (${formatAccuracy(user.accuracy)})` : '';
-    const mode = user.active ? '🟢 online' : '🟠 last seen';
+    const mode = user.active ? '🟢 online' : `🟠 last seen ${formatLastSeen(user.lastSeenAt)}`;
 
     item.textContent = `${user.name}${user.id === userId ? ' (You)' : ''} — ${mode} — ${
       hasLocation ? `${user.lat.toFixed(6)}, ${user.lng.toFixed(6)}${accuracyText}` : 'waiting for GPS...'
@@ -227,11 +238,17 @@ const beginLocationTracking = () => {
 const subscribeRoomStream = () => {
   if (events) events.close();
   events = new EventSource(`/api/events?roomId=${encodeURIComponent(roomId)}`);
-  events.onmessage = (event) => renderRoom(JSON.parse(event.data));
+  events.onmessage = () => {
+    // onmessage overwritten below with parser
+  };
+  events.onmessage = (event) => {
+    renderRoom(JSON.parse(event.data));
+    if (targetUser.value) drawRoute(true);
+  };
   events.onerror = () => updateStatus('Live stream disconnected. Trying to reconnect...', true);
 };
 
-const drawRoute = async () => {
+const drawRoute = async (quiet = false) => {
   const targetId = targetUser.value;
   if (!targetId) return;
 
@@ -259,7 +276,9 @@ const drawRoute = async () => {
 
     const text = `${mode.toUpperCase()} • Distance: ${formatDistance(route.distance)} • ETA: ${formatDuration(route.duration)}`;
     routeInfo.textContent = text;
-    map.fitBounds(routeLayer.getBounds().pad(0.15));
+    if (!quiet) {
+      map.fitBounds(routeLayer.getBounds().pad(0.15));
+    }
   } catch (error) {
     routeInfo.textContent = `Route service unavailable: ${error.message}`;
   }
@@ -298,6 +317,9 @@ joinForm.addEventListener('submit', async (event) => {
 recenterBtn.addEventListener('click', () => fitAllUsers(usersSnapshot));
 routeBtn.addEventListener('click', () => {
   if (mapReady) drawRoute();
+});
+travelMode.addEventListener('change', () => {
+  if (mapReady && targetUser.value) drawRoute(true);
 });
 
 window.addEventListener('beforeunload', () => {
