@@ -13,9 +13,13 @@ const routeInfo = document.getElementById('route-info');
 const navSteps = document.getElementById('nav-steps');
 const targetUsers = document.getElementById('target-users');
 const installBtn = document.getElementById('install-btn');
+const shareLinkBox = document.getElementById('share-link-box');
+const shareLinkInput = document.getElementById('share-link');
+const copyLinkBtn = document.getElementById('copy-link-btn');
 
 let roomId = '';
 let userId = '';
+let inviteToken = '';
 let map;
 let myWatchId;
 let events;
@@ -71,6 +75,20 @@ const formatLastSeen = (timestamp) => {
   return `${Math.floor(sec / 3600)}h ago`;
 };
 
+
+
+const urlParams = new URLSearchParams(window.location.search);
+const linkedRoomId = urlParams.get('room') || '';
+const linkedToken = urlParams.get('token') || '';
+if (linkedRoomId) {
+  const roomInput = document.getElementById('room-input');
+  roomInput.value = linkedRoomId;
+  roomInput.readOnly = true;
+  roomInput.title = 'Room locked by invite link';
+}
+if (linkedToken) {
+  inviteToken = linkedToken;
+}
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -306,7 +324,7 @@ const beginLocationTracking = () => {
 
 const subscribeRoomStream = () => {
   if (events) events.close();
-  events = new EventSource(`/api/events?roomId=${encodeURIComponent(roomId)}`);
+  events = new EventSource(`/api/events?roomId=${encodeURIComponent(roomId)}&token=${encodeURIComponent(inviteToken)}`);
   events.onmessage = (event) => {
     renderRoom(JSON.parse(event.data));
   };
@@ -399,9 +417,16 @@ joinForm.addEventListener('submit', async (event) => {
   if (!name || !roomId) return updateStatus('Name and room ID are required.', true);
 
   try {
-    const joined = await apiPost('/api/join', { roomId, name, deviceId: getDeviceId() });
+    const joined = await apiPost('/api/join', { roomId, name, deviceId: getDeviceId(), inviteToken });
     roomId = joined.roomId;
     userId = joined.userId;
+    inviteToken = joined.inviteToken || inviteToken;
+
+    if (joined.inviteLink) {
+      shareLinkInput.value = joined.inviteLink;
+      shareLinkBox.classList.remove('hidden');
+      window.history.replaceState({}, '', `/?room=${encodeURIComponent(roomId)}&token=${encodeURIComponent(inviteToken)}`);
+    }
 
     trackerSection.classList.remove('hidden');
     roomTitle.textContent = `Room: ${roomId}`;
@@ -423,6 +448,17 @@ routeBtn.addEventListener('click', () => mapReady && drawRoute());
 vehicleMode.addEventListener('change', () => mapReady && selectedTargetIds().length > 0 && drawRoute(true));
 startNavBtn.addEventListener('click', startNavigation);
 stopNavBtn.addEventListener('click', stopNavigation);
+
+
+copyLinkBtn.addEventListener('click', async () => {
+  if (!shareLinkInput.value) return;
+  try {
+    await navigator.clipboard.writeText(shareLinkInput.value);
+    updateStatus('Invite link copied. Share it privately.');
+  } catch {
+    updateStatus('Could not copy automatically. Please copy the link manually.', true);
+  }
+});
 
 installBtn.addEventListener('click', async () => {
   if (!deferredInstallPrompt) {

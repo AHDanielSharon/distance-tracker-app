@@ -25,6 +25,12 @@
           <label>Room ID<input id="room-input" type="text" maxlength="32" required placeholder="e.g. city-run-crew" /></label>
           <button type="submit">Enter Room</button>
         </form>
+        <div id="share-link-box" class="share-link-box hidden">
+          <label>Private room invite link
+            <input id="share-link" type="text" readonly />
+          </label>
+          <button id="copy-link-btn" type="button">Copy Link</button>
+        </div>
         <p id="status" class="status">Not connected</p>
         <button id="install-btn" type="button" class="install-btn hidden">Install App</button>
         <p class="hint">GPS has physical limits; uncertainty is shown so route/distance quality is transparent.</p>

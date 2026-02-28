@@ -9,6 +9,7 @@ const STORE_FILE = path.join(__dirname, 'data', 'store.json');
 
 /**
  * roomId -> {
+ *   inviteToken: string,
  *   users: Map<userId, user>,
  *   clients: Set<ServerResponse>
  * }
@@ -26,6 +27,14 @@ const sanitizeRoomId = (value) => String(value || '').trim().slice(0, 32);
 const sanitizeName = (value) => String(value || '').trim().slice(0, 24);
 const sanitizeDeviceId = (value) => String(value || '').trim().slice(0, 128);
 const normalizeName = (value) => sanitizeName(value).toLowerCase();
+const sanitizeInviteToken = (value) => String(value || '').trim().slice(0, 256);
+const generateInviteToken = () => crypto.randomBytes(24).toString('base64url');
+
+const getBaseUrl = (req) => {
+  const protocol = req.headers['x-forwarded-proto'] || 'http';
+  return `${protocol}://${req.headers.host}`;
+};
+
 
 const haversineDistanceMeters = (a, b) => {
   const R = 6371000;
@@ -41,9 +50,13 @@ const haversineDistanceMeters = (a, b) => {
   return 2 * R * Math.asin(Math.sqrt(h));
 };
 
-const getOrCreateRoom = (roomId) => {
+const getOrCreateRoom = (roomId, inviteToken) => {
   if (!rooms.has(roomId)) {
-    rooms.set(roomId, { users: new Map(), clients: new Set() });
+    rooms.set(roomId, {
+      inviteToken: sanitizeInviteToken(inviteToken) || generateInviteToken(),
+      users: new Map(),
+      clients: new Set(),
+    });
   }
   return rooms.get(roomId);
 };
@@ -51,7 +64,7 @@ const getOrCreateRoom = (roomId) => {
 const saveStore = () => {
   const plain = {};
   for (const [roomId, room] of rooms.entries()) {
-    plain[roomId] = { users: [...room.users.values()] };
+    plain[roomId] = { inviteToken: room.inviteToken, users: [...room.users.values()] };
   }
 
   fs.mkdirSync(path.dirname(STORE_FILE), { recursive: true });
@@ -65,7 +78,11 @@ const loadStore = () => {
     const storedRooms = parsed?.rooms || {};
 
     for (const [roomId, roomData] of Object.entries(storedRooms)) {
-      const room = { users: new Map(), clients: new Set() };
+      const room = {
+        inviteToken: sanitizeInviteToken(roomData.inviteToken) || generateInviteToken(),
+        users: new Map(),
+        clients: new Set(),
+      };
       for (const user of roomData.users || []) {
         room.users.set(user.id, {
           id: user.id,
@@ -193,13 +210,20 @@ const server = http.createServer(async (req, res) => {
       const roomId = sanitizeRoomId(body.roomId);
       const name = sanitizeName(body.name) || 'Anonymous';
       const deviceId = sanitizeDeviceId(body.deviceId);
+      const inviteToken = sanitizeInviteToken(body.inviteToken);
 
       if (!roomId) {
         json(res, 400, { error: 'Room ID is required.' });
         return;
       }
 
-      const room = getOrCreateRoom(roomId);
+      const existingRoom = rooms.get(roomId);
+      if (existingRoom && (!inviteToken || inviteToken !== existingRoom.inviteToken)) {
+        json(res, 403, { error: 'Invalid invite link/token for this room.' });
+        return;
+      }
+
+      const room = existingRoom || getOrCreateRoom(roomId, inviteToken);
       let user = null;
 
       if (deviceId) {
@@ -247,7 +271,16 @@ const server = http.createServer(async (req, res) => {
       }
 
       saveStore();
-      json(res, 200, { ok: true, roomId, userId: user.id, name: user.name, deviceId: user.deviceId });
+      const inviteLink = `${getBaseUrl(req)}/?room=${encodeURIComponent(roomId)}&token=${encodeURIComponent(room.inviteToken)}`;
+      json(res, 200, {
+        ok: true,
+        roomId,
+        userId: user.id,
+        name: user.name,
+        deviceId: user.deviceId,
+        inviteToken: room.inviteToken,
+        inviteLink,
+      });
       broadcast(roomId);
       return;
     }
@@ -303,13 +336,18 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && req.url.startsWith('/api/events?')) {
       const query = new URL(req.url, `http://${req.headers.host}`).searchParams;
       const roomId = sanitizeRoomId(query.get('roomId'));
+      const inviteToken = sanitizeInviteToken(query.get('token'));
 
-      if (!roomId) {
-        json(res, 400, { error: 'roomId query is required.' });
+      if (!roomId || !inviteToken) {
+        json(res, 400, { error: 'roomId and token query are required.' });
         return;
       }
 
-      const room = getOrCreateRoom(roomId);
+      const room = rooms.get(roomId);
+      if (!room || room.inviteToken !== inviteToken) {
+        json(res, 403, { error: 'Invalid room token.' });
+        return;
+      }
 
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
