@@ -17,14 +17,14 @@
     <main class="app-shell">
       <section class="panel join-panel glass">
         <h1>⚡ Neon Distance Room</h1>
-        <p>Create/join a room, track people live, and navigate routes like maps apps.</p>
+        <p>Create/join a room, track people live, and navigate routes with voice guidance.</p>
         <form id="join-form">
           <label>Your Name<input id="name-input" type="text" maxlength="24" required placeholder="e.g. Alex" /></label>
           <label>Room ID<input id="room-input" type="text" maxlength="32" required placeholder="e.g. city-run-crew" /></label>
           <button type="submit">Enter Room</button>
         </form>
         <p id="status" class="status">Not connected</p>
-        <p class="hint">GPS has physical limits; app now shows uncertainty and best vehicle recommendation.</p>
+        <p class="hint">GPS has physical limits; uncertainty is shown so route/distance quality is transparent.</p>
       </section>
 
       <section class="panel map-panel glass hidden" id="tracker-section">
@@ -53,6 +53,7 @@
             </select>
             <button id="route-btn" type="button">Build Route</button>
             <button id="start-nav-btn" type="button">Start Navigation</button>
+            <button id="stop-nav-btn" type="button">Stop Navigation</button>
           </div>
           <div id="target-users" class="target-users"></div>
           <p id="route-info">Choose one or many people, then build route.</p>

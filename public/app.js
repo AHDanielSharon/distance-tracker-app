@@ -8,6 +8,7 @@ const recenterBtn = document.getElementById('recenter-btn');
 const vehicleMode = document.getElementById('vehicle-mode');
 const routeBtn = document.getElementById('route-btn');
 const startNavBtn = document.getElementById('start-nav-btn');
+const stopNavBtn = document.getElementById('stop-nav-btn');
 const routeInfo = document.getElementById('route-info');
 const navSteps = document.getElementById('nav-steps');
 const targetUsers = document.getElementById('target-users');
@@ -20,7 +21,10 @@ let events;
 let mapReady = false;
 let routeLayer = null;
 let usersSnapshot = [];
-let lastRouteData = null;
+let latestRoute = null;
+let navigating = false;
+let activeStepIndex = 0;
+let lastVoiceText = '';
 const markers = new Map();
 const deviceIdKey = 'distance-tracker-device-id';
 
@@ -51,6 +55,12 @@ const formatDuration = (seconds) => {
   const h = Math.floor(mins / 60);
   return `${h}h ${mins % 60}m`;
 };
+
+const updateStatus = (text, isError = false) => {
+  statusLabel.textContent = text;
+  statusLabel.style.color = isError ? '#ff7ca5' : '#72ffe4';
+};
+
 const formatLastSeen = (timestamp) => {
   if (!timestamp) return 'unknown';
   const sec = Math.floor(Math.max(0, Date.now() - timestamp) / 1000);
@@ -59,16 +69,87 @@ const formatLastSeen = (timestamp) => {
   return `${Math.floor(sec / 3600)}h ago`;
 };
 
-const updateStatus = (text, isError = false) => {
-  statusLabel.textContent = text;
-  statusLabel.style.color = isError ? '#ff7ca5' : '#72ffe4';
-};
-
 const chooseVehicle = (meters) => {
   if (meters < 700) return 'walking';
-  if (meters < 4000) return 'scooter';
-  if (meters < 12000) return 'motorcycle';
+  if (meters < 3500) return 'scooter';
+  if (meters < 15000) return 'motorcycle';
   return 'driving';
+};
+
+const instructionFromStep = (step) => {
+  const man = step.maneuver || {};
+  const modifier = man.modifier ? man.modifier.replace('_', ' ') : '';
+  const road = step.name ? ` onto ${step.name}` : '';
+
+  if (step.instruction) {
+    return `${step.instruction}, continue for ${formatDistance(step.distance)}`;
+  }
+
+  switch (man.type) {
+    case 'depart':
+      return `Start and go ${modifier || 'ahead'}${road}. Continue for ${formatDistance(step.distance)}`;
+    case 'arrive':
+      return `You have arrived at your stop.`;
+    case 'turn':
+      return `Turn ${modifier || 'ahead'}${road}. Continue for ${formatDistance(step.distance)}`;
+    case 'new name':
+      return `Continue${road}. Keep going for ${formatDistance(step.distance)}`;
+    case 'roundabout':
+      return `Enter roundabout${road}. Continue for ${formatDistance(step.distance)}`;
+    case 'merge':
+      return `Merge ${modifier || ''}${road}. Continue for ${formatDistance(step.distance)}`;
+    default:
+      return `Go ${modifier || 'ahead'}${road}. Continue for ${formatDistance(step.distance)}`;
+  }
+};
+
+const speak = (text) => {
+  if (!('speechSynthesis' in window) || !text) return;
+  if (text === lastVoiceText) return;
+  lastVoiceText = text;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.rate = 1;
+  utter.pitch = 1;
+  window.speechSynthesis.speak(utter);
+};
+
+const haversine = (a, b) => {
+  const R = 6371000;
+  const toRad = (x) => (x * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+};
+
+const findClosestStepIndex = (lat, lng) => {
+  if (!latestRoute?.steps?.length) return 0;
+  let best = 0;
+  let bestDist = Number.POSITIVE_INFINITY;
+
+  latestRoute.steps.forEach((step, i) => {
+    const loc = step.maneuver?.location;
+    if (!Array.isArray(loc) || loc.length < 2) return;
+    const d = haversine({ lat, lng }, { lat: loc[1], lng: loc[0] });
+    if (d < bestDist) {
+      bestDist = d;
+      best = i;
+    }
+  });
+
+  return best;
+};
+
+const updateNavigationFromPosition = (lat, lng) => {
+  if (!navigating || !latestRoute?.steps?.length) return;
+  activeStepIndex = findClosestStepIndex(lat, lng);
+  const step = latestRoute.steps[activeStepIndex];
+  const instruction = instructionFromStep(step);
+  routeInfo.textContent = `Navigation • Step ${activeStepIndex + 1}/${latestRoute.steps.length}: ${instruction}`;
+  speak(instruction);
 };
 
 const ensureMap = () => {
@@ -85,8 +166,8 @@ const ensureMap = () => {
   const carto = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap &copy; CARTO' });
   const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 20, attribution: 'Tiles &copy; Esri' });
 
-  street.on('tileerror', () => updateStatus('Primary map tiles unavailable. Use alternate layer from top-right.', true));
-  satellite.on('tileerror', () => updateStatus('Satellite tiles temporarily unavailable. Try street/CARTO layer.', true));
+  street.on('tileerror', () => updateStatus('Primary map tiles unavailable. Use top-right layer control.', true));
+  satellite.on('tileerror', () => updateStatus('Satellite tiles unavailable now. Switch to street/clear map.', true));
 
   street.addTo(map);
   L.control.layers({ 'Street View': street, 'Clear City Map': carto, 'Satellite View': satellite }, {}, { collapsed: false, position: 'topright' }).addTo(map);
@@ -124,6 +205,7 @@ const renderTargetUsers = (users) => {
   const selected = new Set([...targetUsers.querySelectorAll('input[type="checkbox"]:checked')].map((el) => el.value));
   targetUsers.innerHTML = '';
   const candidates = users.filter((u) => u.id !== userId && typeof u.lat === 'number' && typeof u.lng === 'number');
+
   if (candidates.length === 0) {
     targetUsers.textContent = 'No route targets available yet.';
     return;
@@ -168,8 +250,6 @@ const renderRoom = ({ users, distances }) => {
       distanceList.appendChild(li);
     });
   }
-
-  if (lastRouteData) drawRoute(true);
 };
 
 const apiPost = async (path, payload) => {
@@ -181,14 +261,20 @@ const apiPost = async (path, payload) => {
 
 const beginLocationTracking = () => {
   if (!navigator.geolocation) return updateStatus('Geolocation not supported.', true);
+
   myWatchId = navigator.geolocation.watchPosition(
     async (position) => {
+      const lat = position.coords.latitude;
+      const lng = position.coords.longitude;
+
       try {
-        await apiPost('/api/location', { roomId, userId, lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy });
+        await apiPost('/api/location', { roomId, userId, lat, lng, accuracy: position.coords.accuracy });
         updateStatus(`Streaming live location (${formatAccuracy(position.coords.accuracy)}).`);
       } catch (error) {
         updateStatus(`Failed to push location: ${error.message}`, true);
       }
+
+      updateNavigationFromPosition(lat, lng);
     },
     (error) => updateStatus(`Location error: ${error.message}`, true),
     { enableHighAccuracy: true, maximumAge: 500, timeout: 10000 },
@@ -198,32 +284,44 @@ const beginLocationTracking = () => {
 const subscribeRoomStream = () => {
   if (events) events.close();
   events = new EventSource(`/api/events?roomId=${encodeURIComponent(roomId)}`);
-  events.onmessage = (event) => renderRoom(JSON.parse(event.data));
+  events.onmessage = (event) => {
+    renderRoom(JSON.parse(event.data));
+  };
   events.onerror = () => updateStatus('Live stream disconnected. Trying to reconnect...', true);
 };
 
 const selectedTargetIds = () => [...targetUsers.querySelectorAll('input[type="checkbox"]:checked')].map((el) => el.value);
 
+const routeUrlForTargets = (cfg, coords) => {
+  if (coords.length <= 2) {
+    return `https://router.project-osrm.org/route/v1/${cfg.profile}/${coords.map((c) => `${c[0]},${c[1]}`).join(';')}?overview=full&geometries=geojson&steps=true`; 
+  }
+
+  return `https://router.project-osrm.org/trip/v1/${cfg.profile}/${coords.map((c) => `${c[0]},${c[1]}`).join(';')}?overview=full&geometries=geojson&steps=true&source=first&roundtrip=false`;
+};
+
 const drawRoute = async (quiet = false) => {
   const me = usersSnapshot.find((u) => u.id === userId);
   const targets = selectedTargetIds().map((id) => usersSnapshot.find((u) => u.id === id)).filter(Boolean);
+
   if (!me || typeof me.lat !== 'number' || targets.length === 0) {
     routeInfo.textContent = 'Select one or more people with location for routing.';
     return;
   }
 
   const coords = [[me.lng, me.lat], ...targets.map((u) => [u.lng, u.lat])];
-  const straightMeters = targets.reduce((acc, u) => acc + Math.hypot((u.lat - me.lat) * 111000, (u.lng - me.lng) * 111000), 0) / Math.max(1, targets.length);
-  const chosenMode = vehicleMode.value === 'auto' ? chooseVehicle(straightMeters) : vehicleMode.value;
-  const cfg = PROFILE_MAP[chosenMode] || PROFILE_MAP.driving;
 
-  const coordStr = coords.map((c) => `${c[0]},${c[1]}`).join(';');
-  const url = `https://router.project-osrm.org/route/v1/${cfg.profile}/${coordStr}?overview=full&geometries=geojson&steps=true`;
+  const averageMeters =
+    targets.reduce((acc, u) => acc + haversine({ lat: me.lat, lng: me.lng }, { lat: u.lat, lng: u.lng }), 0) /
+    Math.max(1, targets.length);
+
+  const selectedMode = vehicleMode.value === 'auto' ? chooseVehicle(averageMeters) : vehicleMode.value;
+  const cfg = PROFILE_MAP[selectedMode] || PROFILE_MAP.driving;
 
   try {
-    const response = await fetch(url);
+    const response = await fetch(routeUrlForTargets(cfg, coords));
     const body = await response.json();
-    const route = body?.routes?.[0];
+    const route = body?.routes?.[0] || body?.trips?.[0];
     if (!route) throw new Error('No route found');
 
     if (routeLayer) map.removeLayer(routeLayer);
@@ -232,13 +330,15 @@ const drawRoute = async (quiet = false) => {
     const adjustedDuration = route.duration * cfg.factor;
     routeInfo.textContent = `${cfg.label}${vehicleMode.value === 'auto' ? ' (auto-picked)' : ''} • Distance: ${formatDistance(route.distance)} • ETA: ${formatDuration(adjustedDuration)} • Stops: ${targets.length}`;
 
-    lastRouteData = { chosenMode, targetIds: targets.map((t) => t.id) };
+    const legs = route.legs || [];
+    const steps = legs.flatMap((leg) => leg.steps || []).slice(0, 20);
+    latestRoute = { steps };
+    activeStepIndex = 0;
 
-    const steps = route.legs.flatMap((leg) => leg.steps || []).slice(0, 12);
     navSteps.innerHTML = '';
     steps.forEach((step, i) => {
       const li = document.createElement('li');
-      li.textContent = `${i + 1}. ${step.maneuver.instruction} (${formatDistance(step.distance)})`;
+      li.textContent = `${i + 1}. ${instructionFromStep(step)}`;
       navSteps.appendChild(li);
     });
 
@@ -249,24 +349,37 @@ const drawRoute = async (quiet = false) => {
 };
 
 const startNavigation = () => {
-  if (!lastRouteData) {
+  if (!latestRoute?.steps?.length) {
     routeInfo.textContent = 'Build a route first, then start navigation.';
     return;
   }
-  routeInfo.textContent = `${routeInfo.textContent} • Navigation started`; 
-  navSteps.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  navigating = true;
+  activeStepIndex = 0;
+  const firstText = instructionFromStep(latestRoute.steps[0]);
+  routeInfo.textContent = `Navigation started • ${firstText}`;
+  speak(`Navigation started. ${firstText}`);
+};
+
+const stopNavigation = () => {
+  navigating = false;
+  activeStepIndex = 0;
+  window.speechSynthesis?.cancel?.();
+  routeInfo.textContent = 'Navigation stopped.';
 };
 
 joinForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const name = document.getElementById('name-input').value.trim();
   roomId = document.getElementById('room-input').value.trim();
+
   if (!name || !roomId) return updateStatus('Name and room ID are required.', true);
 
   try {
     const joined = await apiPost('/api/join', { roomId, name, deviceId: getDeviceId() });
     roomId = joined.roomId;
     userId = joined.userId;
+
     trackerSection.classList.remove('hidden');
     roomTitle.textContent = `Room: ${roomId}`;
 
@@ -286,9 +399,11 @@ recenterBtn.addEventListener('click', () => fitAllUsers(usersSnapshot));
 routeBtn.addEventListener('click', () => mapReady && drawRoute());
 vehicleMode.addEventListener('change', () => mapReady && selectedTargetIds().length > 0 && drawRoute(true));
 startNavBtn.addEventListener('click', startNavigation);
+stopNavBtn.addEventListener('click', stopNavigation);
 
 window.addEventListener('beforeunload', () => {
   if (roomId && userId && navigator.sendBeacon) navigator.sendBeacon('/api/leave', JSON.stringify({ roomId, userId }));
+  window.speechSynthesis?.cancel?.();
 });
 
 updateStatus('Ready. Enter a room ID and click Enter Room.');
