@@ -333,6 +333,27 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+
+    if (req.method === 'GET' && req.url.startsWith('/api/room?')) {
+      const query = new URL(req.url, `http://${req.headers.host}`).searchParams;
+      const roomId = sanitizeRoomId(query.get('roomId'));
+      const inviteToken = sanitizeInviteToken(query.get('token'));
+
+      if (!roomId || !inviteToken) {
+        json(res, 400, { error: 'roomId and token query are required.' });
+        return;
+      }
+
+      const room = rooms.get(roomId);
+      if (!room || room.inviteToken !== inviteToken) {
+        json(res, 403, { error: 'Invalid room token.' });
+        return;
+      }
+
+      json(res, 200, buildSnapshot(roomId));
+      return;
+    }
+
     if (req.method === 'GET' && req.url.startsWith('/api/events?')) {
       const query = new URL(req.url, `http://${req.headers.host}`).searchParams;
       const roomId = sanitizeRoomId(query.get('roomId'));

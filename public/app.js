@@ -98,12 +98,30 @@ if (storedName) {
 }
 
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/service-worker.js').catch(() => {
+  window.addEventListener('load', async () => {
+    try {
+      const reg = await navigator.serviceWorker.register('/service-worker.js');
+      if (reg.waiting) {
+        reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+      }
+      reg.addEventListener('updatefound', () => {
+        const worker = reg.installing;
+        if (!worker) return;
+        worker.addEventListener('statechange', () => {
+          if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+            worker.postMessage({ type: 'SKIP_WAITING' });
+          }
+        });
+      });
+    } catch {
       updateStatus('Offline install support unavailable in this browser.', true);
-    });
+    }
   });
 }
+
+navigator.serviceWorker?.addEventListener('controllerchange', () => {
+  window.location.reload();
+});
 
 window.addEventListener('beforeinstallprompt', (event) => {
   event.preventDefault();
@@ -329,13 +347,36 @@ const beginLocationTracking = () => {
   );
 };
 
+
+const fetchSnapshot = async () => {
+  if (!roomId || !inviteToken) return;
+  try {
+    const response = await fetch(`/api/room?roomId=${encodeURIComponent(roomId)}&token=${encodeURIComponent(inviteToken)}`);
+    if (!response.ok) return;
+    const snapshot = await response.json();
+    renderRoom(snapshot);
+  } catch {
+    // ignore transient fetch errors
+  }
+};
+
 const subscribeRoomStream = () => {
+  if (!inviteToken) {
+    updateStatus('Missing room token. Open a valid invite link.', true);
+    return;
+  }
+
   if (events) events.close();
   events = new EventSource(`/api/events?roomId=${encodeURIComponent(roomId)}&token=${encodeURIComponent(inviteToken)}`);
   events.onmessage = (event) => {
     renderRoom(JSON.parse(event.data));
   };
-  events.onerror = () => updateStatus('Live stream disconnected. Trying to reconnect...', true);
+  events.onerror = () => {
+    updateStatus('Live stream disconnected. Trying to reconnect...', true);
+    fetchSnapshot();
+  };
+
+  fetchSnapshot();
 };
 
 const selectedTargetIds = () => [...targetUsers.querySelectorAll('input[type="checkbox"]:checked')].map((el) => el.value);
