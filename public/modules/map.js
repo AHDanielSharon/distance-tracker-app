@@ -11,6 +11,8 @@ export class MapManager {
   }
 
   init(onTileError) {
+    if (this.map) return;
+
     this.map = L.map(this.containerId, { zoomControl: false, worldCopyJump: true, minZoom: 2 }).setView([20, 0], 2);
     L.control.zoom({ position: 'bottomright' }).addTo(this.map);
 

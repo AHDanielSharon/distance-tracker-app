@@ -67,19 +67,28 @@ let lastUsers = [];
 let heatMode = false;
 let isSos = false;
 let myWatchId;
+let isJoining = false;
 
 const sessionKey = 'distance-tracker-last-session';
 const nameKey = 'distance-tracker-preferred-name';
 const deviceKey = 'distance-tracker-device-id';
+const tabKey = 'distance-tracker-tab-id';
 const themeKey = 'distance-tracker-theme';
 
 const getDeviceId = () => {
-  let id = localStorage.getItem(deviceKey);
-  if (!id) {
-    id = crypto.randomUUID();
-    localStorage.setItem(deviceKey, id);
+  let baseId = localStorage.getItem(deviceKey);
+  if (!baseId) {
+    baseId = crypto.randomUUID();
+    localStorage.setItem(deviceKey, baseId);
   }
-  return id;
+
+  let tabId = sessionStorage.getItem(tabKey);
+  if (!tabId) {
+    tabId = crypto.randomUUID();
+    sessionStorage.setItem(tabKey, tabId);
+  }
+
+  return `${baseId}:${tabId}`;
 };
 
 const toKmh = (mps) => mps * 3.6;
@@ -339,26 +348,35 @@ const subscribe = () => {
 };
 
 const joinRoom = async () => {
-  const name = els.name.value.trim() || `Guest-${crypto.randomUUID().slice(0, 5)}`;
-  roomId = els.room.value.trim();
-  if (!roomId) return setStatus('Room ID required.', true);
+  if (isJoining) return;
+  isJoining = true;
+  try {
+    const name = els.name.value.trim() || `Guest-${crypto.randomUUID().slice(0, 5)}`;
+    roomId = els.room.value.trim();
+    if (!roomId) {
+      setStatus('Room ID required.', true);
+      return;
+    }
 
-  const joined = await apiPost('/api/join', { roomId, name, deviceId: getDeviceId(), inviteToken });
-  userId = joined.userId;
-  inviteToken = joined.inviteToken;
-  localStorage.setItem(nameKey, name);
-  localStorage.setItem(sessionKey, JSON.stringify({ roomId, inviteToken }));
+    const joined = await apiPost('/api/join', { roomId, name, deviceId: getDeviceId(), inviteToken });
+    userId = joined.userId;
+    inviteToken = joined.inviteToken;
+    localStorage.setItem(nameKey, name);
+    localStorage.setItem(sessionKey, JSON.stringify({ roomId, inviteToken }));
 
-  els.tracker.classList.remove('hidden');
-  mapManager.init(() => setStatus('Map tiles issue: switching layers can help.', true));
+    els.tracker.classList.remove('hidden');
+    mapManager.init(() => setStatus('Map tiles issue: switching layers can help.', true));
 
-  els.shareLink.value = joined.inviteLink;
-  els.shareBox.classList.remove('hidden');
-  history.replaceState({}, '', `/?room=${encodeURIComponent(roomId)}&token=${encodeURIComponent(inviteToken)}`);
+    els.shareLink.value = joined.inviteLink;
+    els.shareBox.classList.remove('hidden');
+    history.replaceState({}, '', `/?room=${encodeURIComponent(roomId)}&token=${encodeURIComponent(inviteToken)}`);
 
-  subscribe();
-  fetchSnapshot().catch(() => {});
-  setStatus(`Joined ${roomId}`);
+    subscribe();
+    fetchSnapshot().catch(() => {});
+    setStatus(`Joined ${roomId}`);
+  } finally {
+    isJoining = false;
+  }
 };
 
 const pushLocation = async (position) => {

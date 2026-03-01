@@ -26,7 +26,6 @@ const json = (res, status, payload) => {
 const sanitizeRoomId = (value) => String(value || '').trim().slice(0, 32);
 const sanitizeName = (value) => String(value || '').trim().slice(0, 24);
 const sanitizeDeviceId = (value) => String(value || '').trim().slice(0, 128);
-const normalizeName = (value) => sanitizeName(value).toLowerCase();
 const sanitizeInviteToken = (value) => String(value || '').trim().slice(0, 256);
 const generateInviteToken = () => crypto.randomBytes(24).toString('base64url');
 
@@ -224,32 +223,18 @@ const server = http.createServer(async (req, res) => {
       }
 
       const existingRoom = rooms.get(roomId);
-      if (existingRoom && (!inviteToken || inviteToken !== existingRoom.inviteToken)) {
+      if (existingRoom && inviteToken && inviteToken !== existingRoom.inviteToken) {
         json(res, 403, { error: 'Invalid invite link/token for this room.' });
         return;
       }
 
       const room = existingRoom || getOrCreateRoom(roomId, inviteToken);
       let user = null;
-      let matchedByDevice = false;
-      let matchedByName = false;
 
       if (deviceId) {
         for (const existing of room.users.values()) {
           if (existing.deviceId === deviceId) {
             user = existing;
-            matchedByDevice = true;
-            break;
-          }
-        }
-      }
-
-      if (!user) {
-        const wantedName = normalizeName(name);
-        for (const existing of room.users.values()) {
-          if (normalizeName(existing.name) === wantedName) {
-            user = existing;
-            matchedByName = true;
             break;
           }
         }
@@ -270,14 +255,8 @@ const server = http.createServer(async (req, res) => {
         };
         room.users.set(userId, user);
       } else {
-        const isTakeover = matchedByName && !matchedByDevice;
         user.deviceId = deviceId || user.deviceId || null;
         user.name = name;
-        if (isTakeover) {
-          user.lat = null;
-          user.lng = null;
-          user.accuracy = null;
-        }
         user.active = true;
         user.updatedAt = Date.now();
         user.lastSeenAt = Date.now();
