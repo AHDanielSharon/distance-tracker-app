@@ -4,83 +4,108 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Neon Distance Tracker</title>
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-      crossorigin=""
-    />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
     <link rel="stylesheet" href="styles.css" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="theme-color" content="#0e142c" />
   </head>
   <body>
-    <div class="background-glow"></div>
+    <div id="sos-banner" class="sos-banner hidden">🚨 Emergency alert in this room</div>
     <main class="app-shell">
-      <section class="panel join-panel glass">
-        <h1>⚡ Neon Distance Room</h1>
-        <p>Create/join a room, track people live, and navigate routes with voice guidance.</p>
+      <section class="panel glass">
+        <div class="row between">
+          <h1>⚡ Neon Movement Intelligence</h1>
+          <button id="theme-toggle" type="button">Toggle Theme</button>
+        </div>
         <form id="join-form">
-          <label>Your Name<input id="name-input" type="text" maxlength="24" required placeholder="e.g. Alex" /></label>
-          <label>Room ID<input id="room-input" type="text" maxlength="32" required placeholder="e.g. city-run-crew" /></label>
-          <button type="submit">Enter Room</button>
+          <label>Your Name <input id="name-input" type="text" required maxlength="24" /></label>
+          <label>Room ID <input id="room-input" type="text" required maxlength="32" /></label>
+          <div class="row wrap">
+            <button type="submit">Enter Room</button>
+            <button id="install-btn" type="button" class="hidden">Install App</button>
+            <span id="live-indicator" class="live-indicator">Offline</span>
+          </div>
         </form>
-        <p id="status" class="status">Not connected</p>
-        <button id="install-btn" type="button" class="install-btn hidden">Install App</button>
-        <p class="hint">GPS has physical limits; uncertainty is shown so route/distance quality is transparent.</p>
+        <div id="share-link-box" class="share-link-box hidden">
+          <label>Private room invite link <input id="share-link" type="text" readonly /></label>
+          <div class="row wrap">
+            <button id="copy-link-btn" type="button">Copy Link</button>
+            <button id="whatsapp-share-btn" type="button">Share on WhatsApp</button>
+          </div>
+        </div>
+        <div class="row wrap">
+          <label><input id="privacy-blur" type="checkbox" /> Approximate location mode</label>
+          <label><input id="battery-saver" type="checkbox" /> Battery saver</label>
+          <label><input id="sound-alert" type="checkbox" /> Sound alerts</label>
+          <label>Radius <select id="radius-select"><option>50</option><option selected>100</option><option>500</option></select> m</label>
+          <button id="sos-btn" type="button" class="sos">SOS</button>
+        </div>
+        <p id="status">Ready.</p>
       </section>
 
-      <section class="panel map-panel glass hidden" id="tracker-section">
-        <header class="top-row">
-          <h2 id="room-title">Room</h2>
-          <div class="actions">
-            <button id="recenter-btn" type="button">Recenter All</button>
-            <span id="live-indicator">● LIVE</span>
-          </div>
-        </header>
-
-        <div id="map"></div>
-
-        <section class="route-box">
-          <h3>Smart Route Planner</h3>
-          <div class="route-controls">
-            <select id="vehicle-mode">
-              <option value="auto">🤖 Auto (Recommended)</option>
-              <option value="driving">🚗 Car</option>
-              <option value="motorcycle">🏍️ Motorcycle</option>
-              <option value="truck">🚚 Truck</option>
-              <option value="bus">🚌 Bus</option>
-              <option value="cycling">🚴 Bicycle</option>
-              <option value="scooter">🛴 Scooter</option>
-              <option value="walking">🚶 Walking</option>
-            </select>
-            <button id="route-btn" type="button">Build Route</button>
-            <button id="start-nav-btn" type="button">Start Navigation</button>
-            <button id="stop-nav-btn" type="button">Stop Navigation</button>
-          </div>
-          <div id="target-users" class="target-users"></div>
-          <p id="route-info">Choose one or many people, then build route.</p>
-          <ol id="nav-steps" class="nav-steps"></ol>
-        </section>
-
-        <div class="lists">
+      <section class="panel glass hidden" id="tracker-section">
+        <div class="grid-2">
           <div>
-            <h3>People in Room</h3>
+            <div id="map"></div>
+            <div class="row wrap">
+              <button id="recenter-btn" type="button">Recenter</button>
+              <button id="heat-toggle" type="button">Heatmap</button>
+              <button id="replay-play" type="button">Replay ▶</button>
+              <button id="replay-stop" type="button">Replay ⏹</button>
+              <input id="replay-slider" type="range" min="0" max="0" value="0" />
+            </div>
+          </div>
+          <div>
+            <h3>Routing & Navigation</h3>
+            <div class="row wrap">
+              <select id="vehicle-mode">
+                <option value="auto">Auto</option>
+                <option value="driving">Car</option>
+                <option value="motorcycle">Motorcycle</option>
+                <option value="truck">Truck</option>
+                <option value="bus">Bus</option>
+                <option value="cycling">Bicycle</option>
+                <option value="scooter">Scooter</option>
+                <option value="walking">Walking</option>
+              </select>
+              <button id="select-all-btn" type="button">Select All</button>
+              <button id="clear-all-btn" type="button">Clear All</button>
+            </div>
+            <div id="target-users" class="target-users"></div>
+            <div class="row wrap">
+              <button id="route-btn" type="button">Build Route</button>
+              <button id="start-nav-btn" type="button">Start Nav</button>
+              <button id="stop-nav-btn" type="button">Stop Nav</button>
+              <span id="target-count">0 selected</span>
+            </div>
+            <p id="route-info">Choose people and build route.</p>
+            <ol id="nav-steps" class="nav-steps"></ol>
+          </div>
+        </div>
+
+        <div class="grid-3">
+          <div>
+            <h3>People</h3>
             <ul id="people-list"></ul>
           </div>
           <div>
             <h3>Distances</h3>
             <ul id="distance-list"></ul>
           </div>
+          <div>
+            <h3>Analytics</h3>
+            <canvas id="speedometer" width="220" height="120"></canvas>
+            <p id="speed-stats"></p>
+            <canvas id="movement-graph" width="320" height="130"></canvas>
+            <p id="room-analytics"></p>
+            <p id="leaderboard"></p>
+            <p id="prediction"></p>
+          </div>
         </div>
       </section>
     </main>
 
-    <script
-      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-      crossorigin=""
-    ></script>
-    <script src="app.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script type="module" src="app.js"></script>
   </body>
 </html>

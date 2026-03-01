@@ -1,447 +1,503 @@
-const joinForm = document.getElementById('join-form');
-const statusLabel = document.getElementById('status');
-const trackerSection = document.getElementById('tracker-section');
-const roomTitle = document.getElementById('room-title');
-const peopleList = document.getElementById('people-list');
-const distanceList = document.getElementById('distance-list');
-const recenterBtn = document.getElementById('recenter-btn');
-const vehicleMode = document.getElementById('vehicle-mode');
-const routeBtn = document.getElementById('route-btn');
-const startNavBtn = document.getElementById('start-nav-btn');
-const stopNavBtn = document.getElementById('stop-nav-btn');
-const routeInfo = document.getElementById('route-info');
-const navSteps = document.getElementById('nav-steps');
-const targetUsers = document.getElementById('target-users');
-const installBtn = document.getElementById('install-btn');
+import { MapManager } from './modules/map.js';
+import { MovementAnalytics } from './modules/analytics.js';
+import { predictNextPositions, estimateArrivalSeconds, bearingDegrees } from './modules/aiPrediction.js';
+import { AlertsManager } from './modules/alerts.js';
+import { ReplayController } from './modules/replay.js';
 
-let roomId = '';
-let userId = '';
-let map;
-let myWatchId;
-let events;
-let mapReady = false;
-let routeLayer = null;
-let usersSnapshot = [];
-let latestRoute = null;
-let navigating = false;
-let activeStepIndex = 0;
-let lastVoiceText = '';
-let deferredInstallPrompt = null;
-const markers = new Map();
-const deviceIdKey = 'distance-tracker-device-id';
-
-const PROFILE_MAP = {
-  driving: { profile: 'driving', factor: 1, label: 'Car' },
-  motorcycle: { profile: 'driving', factor: 0.9, label: 'Motorcycle' },
-  truck: { profile: 'driving', factor: 1.25, label: 'Truck' },
-  bus: { profile: 'driving', factor: 1.15, label: 'Bus' },
-  cycling: { profile: 'cycling', factor: 1, label: 'Bicycle' },
-  scooter: { profile: 'cycling', factor: 0.8, label: 'Scooter' },
-  walking: { profile: 'walking', factor: 1, label: 'Walking' },
+const $ = (id) => document.getElementById(id);
+const els = {
+  joinForm: $('join-form'),
+  name: $('name-input'),
+  room: $('room-input'),
+  status: $('status'),
+  tracker: $('tracker-section'),
+  people: $('people-list'),
+  distances: $('distance-list'),
+  targetUsers: $('target-users'),
+  targetCount: $('target-count'),
+  routeInfo: $('route-info'),
+  navSteps: $('nav-steps'),
+  vehicle: $('vehicle-mode'),
+  routeBtn: $('route-btn'),
+  startNav: $('start-nav-btn'),
+  stopNav: $('stop-nav-btn'),
+  recenter: $('recenter-btn'),
+  theme: $('theme-toggle'),
+  live: $('live-indicator'),
+  shareBox: $('share-link-box'),
+  shareLink: $('share-link'),
+  copy: $('copy-link-btn'),
+  wa: $('whatsapp-share-btn'),
+  install: $('install-btn'),
+  heat: $('heat-toggle'),
+  replaySlider: $('replay-slider'),
+  replayPlay: $('replay-play'),
+  replayStop: $('replay-stop'),
+  speedometer: $('speedometer'),
+  speedStats: $('speed-stats'),
+  movementGraph: $('movement-graph'),
+  roomAnalytics: $('room-analytics'),
+  leaderboard: $('leaderboard'),
+  prediction: $('prediction'),
+  radius: $('radius-select'),
+  soundAlert: $('sound-alert'),
+  batterySaver: $('battery-saver'),
+  privacyBlur: $('privacy-blur'),
+  sosBtn: $('sos-btn'),
+  sosBanner: $('sos-banner'),
+  selectAll: $('select-all-btn'),
+  clearAll: $('clear-all-btn'),
 };
 
+const mapManager = new MapManager('map');
+const analytics = new MovementAnalytics();
+const alerts = new AlertsManager();
+const replay = new ReplayController(els.replaySlider);
+
+let roomId = '';
+let inviteToken = '';
+let userId = '';
+let events;
+let routeLayer;
+let latestRoute = [];
+let navOn = false;
+let lastVoice = '';
+let deferredInstallPrompt;
+let lastUsers = [];
+let heatMode = false;
+let isSos = false;
+let myWatchId;
+
+const sessionKey = 'distance-tracker-last-session';
+const nameKey = 'distance-tracker-preferred-name';
+const deviceKey = 'distance-tracker-device-id';
+const themeKey = 'distance-tracker-theme';
+
 const getDeviceId = () => {
-  let id = localStorage.getItem(deviceIdKey);
+  let id = localStorage.getItem(deviceKey);
   if (!id) {
     id = crypto.randomUUID();
-    localStorage.setItem(deviceIdKey, id);
+    localStorage.setItem(deviceKey, id);
   }
   return id;
 };
 
-const formatDistance = (meters) => (meters >= 1000 ? `${(meters / 1000).toFixed(3)} km` : `${Math.round(meters)} m`);
-const formatAccuracy = (meters) => (typeof meters === 'number' ? (meters >= 1000 ? `±${(meters / 1000).toFixed(2)} km` : `±${Math.round(meters)} m`) : 'N/A');
-const formatDuration = (seconds) => {
-  const mins = Math.round(seconds / 60);
-  if (mins < 60) return `${mins} min`;
-  const h = Math.floor(mins / 60);
-  return `${h}h ${mins % 60}m`;
+const toKmh = (mps) => mps * 3.6;
+const fmtDistance = (m) => (m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`);
+const fmtTime = (s) => {
+  if (!s) return 'N/A';
+  const min = Math.round(s / 60);
+  if (min < 60) return `${min} min`;
+  return `${Math.floor(min / 60)}h ${min % 60}m`;
 };
 
-const updateStatus = (text, isError = false) => {
-  statusLabel.textContent = text;
-  statusLabel.style.color = isError ? '#ff7ca5' : '#72ffe4';
+const setLive = (state) => {
+  els.live.className = `live-indicator ${
+    state === 'connected' ? 'live-connected' : state === 'reconnecting' ? 'live-reconnecting' : 'live-offline'
+  }`;
+  els.live.textContent = state[0].toUpperCase() + state.slice(1);
 };
 
-const formatLastSeen = (timestamp) => {
-  if (!timestamp) return 'unknown';
-  const sec = Math.floor(Math.max(0, Date.now() - timestamp) / 1000);
-  if (sec < 60) return `${sec}s ago`;
-  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
-  return `${Math.floor(sec / 3600)}h ago`;
-};
-
-
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/service-worker.js').catch(() => {
-      updateStatus('Offline install support unavailable in this browser.', true);
-    });
-  });
-}
-
-window.addEventListener('beforeinstallprompt', (event) => {
-  event.preventDefault();
-  deferredInstallPrompt = event;
-  installBtn.classList.remove('hidden');
-});
-
-window.addEventListener('appinstalled', () => {
-  deferredInstallPrompt = null;
-  installBtn.classList.add('hidden');
-  updateStatus('App installed successfully.');
-});
-
-const chooseVehicle = (meters) => {
-  if (meters < 700) return 'walking';
-  if (meters < 3500) return 'scooter';
-  if (meters < 15000) return 'motorcycle';
-  return 'driving';
-};
-
-const instructionFromStep = (step) => {
-  const man = step.maneuver || {};
-  const modifier = man.modifier ? man.modifier.replace('_', ' ') : '';
-  const road = step.name ? ` onto ${step.name}` : '';
-
-  if (step.instruction) {
-    return `${step.instruction}, continue for ${formatDistance(step.distance)}`;
-  }
-
-  switch (man.type) {
-    case 'depart':
-      return `Start and go ${modifier || 'ahead'}${road}. Continue for ${formatDistance(step.distance)}`;
-    case 'arrive':
-      return `You have arrived at your stop.`;
-    case 'turn':
-      return `Turn ${modifier || 'ahead'}${road}. Continue for ${formatDistance(step.distance)}`;
-    case 'new name':
-      return `Continue${road}. Keep going for ${formatDistance(step.distance)}`;
-    case 'roundabout':
-      return `Enter roundabout${road}. Continue for ${formatDistance(step.distance)}`;
-    case 'merge':
-      return `Merge ${modifier || ''}${road}. Continue for ${formatDistance(step.distance)}`;
-    default:
-      return `Go ${modifier || 'ahead'}${road}. Continue for ${formatDistance(step.distance)}`;
-  }
+const setStatus = (msg, err = false) => {
+  els.status.textContent = msg;
+  els.status.style.color = err ? '#ff97a6' : '';
 };
 
 const speak = (text) => {
-  if (!('speechSynthesis' in window) || !text) return;
-  if (text === lastVoiceText) return;
-  lastVoiceText = text;
+  if (!('speechSynthesis' in window) || !text || text === lastVoice) return;
+  lastVoice = text;
   window.speechSynthesis.cancel();
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.rate = 1;
-  utter.pitch = 1;
-  window.speechSynthesis.speak(utter);
-};
-
-const haversine = (a, b) => {
-  const R = 6371000;
-  const toRad = (x) => (x * Math.PI) / 180;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(h));
-};
-
-const findClosestStepIndex = (lat, lng) => {
-  if (!latestRoute?.steps?.length) return 0;
-  let best = 0;
-  let bestDist = Number.POSITIVE_INFINITY;
-
-  latestRoute.steps.forEach((step, i) => {
-    const loc = step.maneuver?.location;
-    if (!Array.isArray(loc) || loc.length < 2) return;
-    const d = haversine({ lat, lng }, { lat: loc[1], lng: loc[0] });
-    if (d < bestDist) {
-      bestDist = d;
-      best = i;
-    }
-  });
-
-  return best;
-};
-
-const updateNavigationFromPosition = (lat, lng) => {
-  if (!navigating || !latestRoute?.steps?.length) return;
-  activeStepIndex = findClosestStepIndex(lat, lng);
-  const step = latestRoute.steps[activeStepIndex];
-  const instruction = instructionFromStep(step);
-  routeInfo.textContent = `Navigation • Step ${activeStepIndex + 1}/${latestRoute.steps.length}: ${instruction}`;
-  speak(instruction);
-};
-
-const ensureMap = () => {
-  if (mapReady) return true;
-  if (typeof L === 'undefined') {
-    updateStatus('Map library failed to load. Check internet and reload.', true);
-    return false;
-  }
-
-  map = L.map('map', { zoomControl: false, worldCopyJump: true, minZoom: 2 }).setView([20, 0], 2);
-  L.control.zoom({ position: 'bottomright' }).addTo(map);
-
-  const street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap contributors' });
-  const carto = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap &copy; CARTO' });
-  const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 20, attribution: 'Tiles &copy; Esri' });
-
-  street.on('tileerror', () => updateStatus('Primary map tiles unavailable. Use top-right layer control.', true));
-  satellite.on('tileerror', () => updateStatus('Satellite tiles unavailable now. Switch to street/clear map.', true));
-
-  street.addTo(map);
-  L.control.layers({ 'Street View': street, 'Clear City Map': carto, 'Satellite View': satellite }, {}, { collapsed: false, position: 'topright' }).addTo(map);
-
-  mapReady = true;
-  return true;
-};
-
-const upsertMarker = (user) => {
-  if (!mapReady || typeof user.lat !== 'number' || typeof user.lng !== 'number') return;
-  if (!markers.has(user.id)) markers.set(user.id, L.marker([user.lat, user.lng]).addTo(map));
-  const marker = markers.get(user.id);
-  marker.setLatLng([user.lat, user.lng]);
-  marker.bindPopup(`${user.name}${user.id === userId ? ' (You)' : ''} • ${user.active ? 'online' : `last seen ${formatLastSeen(user.lastSeenAt)}`}`);
-};
-
-const removeMissingMarkers = (users) => {
-  const ids = new Set(users.map((u) => u.id));
-  for (const [id, marker] of markers.entries()) {
-    if (!ids.has(id)) {
-      map.removeLayer(marker);
-      markers.delete(id);
-    }
-  }
-};
-
-const fitAllUsers = (users) => {
-  if (!mapReady) return;
-  const withCoords = users.filter((u) => typeof u.lat === 'number' && typeof u.lng === 'number');
-  if (withCoords.length === 0) return;
-  map.fitBounds(L.latLngBounds(withCoords.map((u) => [u.lat, u.lng])).pad(0.2));
-};
-
-const renderTargetUsers = (users) => {
-  const selected = new Set([...targetUsers.querySelectorAll('input[type="checkbox"]:checked')].map((el) => el.value));
-  targetUsers.innerHTML = '';
-  const candidates = users.filter((u) => u.id !== userId && typeof u.lat === 'number' && typeof u.lng === 'number');
-
-  if (candidates.length === 0) {
-    targetUsers.textContent = 'No route targets available yet.';
-    return;
-  }
-
-  candidates.forEach((user) => {
-    const label = document.createElement('label');
-    label.className = 'target-item';
-    const input = document.createElement('input');
-    input.type = 'checkbox';
-    input.value = user.id;
-    if (selected.has(user.id)) input.checked = true;
-    label.append(input, document.createTextNode(` ${user.name}${user.active ? '' : ` (last seen ${formatLastSeen(user.lastSeenAt)})`}`));
-    targetUsers.appendChild(label);
-  });
-};
-
-const renderRoom = ({ users, distances }) => {
-  usersSnapshot = users;
-  peopleList.innerHTML = '';
-  distanceList.innerHTML = '';
-
-  users.forEach((user) => {
-    const li = document.createElement('li');
-    const has = typeof user.lat === 'number' && typeof user.lng === 'number';
-    li.textContent = `${user.name}${user.id === userId ? ' (You)' : ''} — ${user.active ? '🟢 online' : `🟠 last seen ${formatLastSeen(user.lastSeenAt)}`} — ${has ? `${user.lat.toFixed(6)}, ${user.lng.toFixed(6)} (${formatAccuracy(user.accuracy)})` : 'waiting for GPS...'}`;
-    peopleList.appendChild(li);
-    upsertMarker(user);
-  });
-
-  removeMissingMarkers(users);
-  renderTargetUsers(users);
-
-  if (distances.length === 0) {
-    const li = document.createElement('li');
-    li.textContent = 'Need at least two coordinates to compute distance.';
-    distanceList.appendChild(li);
-  } else {
-    distances.sort((a, b) => a.meters - b.meters).forEach((d) => {
-      const li = document.createElement('li');
-      li.textContent = `${d.names[0]} ↔ ${d.names[1]}: ${formatDistance(d.meters)} (uncertainty ${formatAccuracy(d.errorMeters)})`;
-      distanceList.appendChild(li);
-    });
-  }
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1;
+  window.speechSynthesis.speak(u);
 };
 
 const apiPost = async (path, payload) => {
-  const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error || 'API error');
+  const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || 'API error');
   return body;
 };
 
-const beginLocationTracking = () => {
-  if (!navigator.geolocation) return updateStatus('Geolocation not supported.', true);
+const selectedTargetIds = () => [...els.targetUsers.querySelectorAll('input[type="checkbox"]:checked')].map((e) => e.value);
+const updateTargetCount = () => { els.targetCount.textContent = `${selectedTargetIds().length} selected`; };
 
-  myWatchId = navigator.geolocation.watchPosition(
-    async (position) => {
-      const lat = position.coords.latitude;
-      const lng = position.coords.longitude;
+const renderTargets = (users) => {
+  const old = new Set(selectedTargetIds());
+  els.targetUsers.innerHTML = '';
+  const candidates = users.filter((u) => u.id !== userId && typeof u.lat === 'number' && typeof u.lng === 'number');
+  if (!candidates.length) {
+    els.targetUsers.textContent = 'No route targets yet.';
+    updateTargetCount();
+    return;
+  }
+  const auto = old.size === 0;
+  candidates.forEach((u) => {
+    const label = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = u.id;
+    cb.checked = auto || old.has(u.id);
+    cb.addEventListener('change', updateTargetCount);
+    label.append(cb, document.createTextNode(` ${u.name}`));
+    els.targetUsers.appendChild(label);
+  });
+  updateTargetCount();
+};
 
-      try {
-        await apiPost('/api/location', { roomId, userId, lat, lng, accuracy: position.coords.accuracy });
-        updateStatus(`Streaming live location (${formatAccuracy(position.coords.accuracy)}).`);
-      } catch (error) {
-        updateStatus(`Failed to push location: ${error.message}`, true);
+const drawSpeedometer = (speedKmh) => {
+  const c = els.speedometer;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  ctx.lineWidth = 10;
+  ctx.strokeStyle = '#244';
+  ctx.beginPath();
+  ctx.arc(110, 110, 75, Math.PI, 2 * Math.PI);
+  ctx.stroke();
+  const t = Math.min(1, speedKmh / 120);
+  ctx.strokeStyle = '#38f3ff';
+  ctx.beginPath();
+  ctx.arc(110, 110, 75, Math.PI, Math.PI + Math.PI * t);
+  ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.font = '16px sans-serif';
+  ctx.fillText(`${speedKmh.toFixed(1)} km/h`, 70, 70);
+};
+
+const drawMovementGraph = (series) => {
+  const c = els.movementGraph;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  ctx.strokeStyle = '#2a3455';
+  ctx.strokeRect(0, 0, c.width, c.height);
+  if (!series.length) return;
+  const max = Math.max(5, ...series.map((p) => p.speedKmh));
+  ctx.strokeStyle = '#7affd9';
+  ctx.beginPath();
+  series.forEach((p, i) => {
+    const x = (i / Math.max(1, series.length - 1)) * (c.width - 10) + 5;
+    const y = c.height - (p.speedKmh / max) * (c.height - 10) - 5;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+};
+
+const blurLocation = (lat, lng) => {
+  const step = 0.001;
+  return [Math.round(lat / step) * step, Math.round(lng / step) * step];
+};
+
+const getMe = () => lastUsers.find((u) => u.id === userId);
+
+const updateNavigationProgress = (lat, lng) => {
+  if (!navOn || !latestRoute.length) return;
+  let bestI = 0;
+  let bestD = Number.POSITIVE_INFINITY;
+  latestRoute.forEach((s, i) => {
+    const loc = s.maneuver?.location;
+    if (!loc) return;
+    const d = MovementAnalytics.haversine({ lat, lng }, { lat: loc[1], lng: loc[0] });
+    if (d < bestD) {
+      bestD = d;
+      bestI = i;
+    }
+  });
+  const step = latestRoute[bestI];
+  const text = `${step.maneuver?.type || 'Go'} ${step.maneuver?.modifier || 'ahead'} for ${fmtDistance(step.distance)}`;
+  els.routeInfo.textContent = `Navigation: ${text}`;
+  speak(text);
+};
+
+const routeUrl = (profile, coords) =>
+  coords.length <= 2
+    ? `https://router.project-osrm.org/route/v1/${profile}/${coords.join(';')}?overview=full&geometries=geojson&steps=true`
+    : `https://router.project-osrm.org/trip/v1/${profile}/${coords.join(';')}?overview=full&geometries=geojson&steps=true&source=first&roundtrip=false`;
+
+const buildRoute = async (quiet = false) => {
+  const me = getMe();
+  if (!me || typeof me.lat !== 'number') return setStatus('Your location not available yet.', true);
+  const targets = selectedTargetIds().map((id) => lastUsers.find((u) => u.id === id)).filter(Boolean);
+  if (!targets.length) return setStatus('Select one or more people for routing.', true);
+
+  const avg =
+    targets.reduce((acc, t) => acc + MovementAnalytics.haversine(me, t), 0) / Math.max(1, targets.length);
+  const mode = els.vehicle.value === 'auto' ? (avg < 700 ? 'walking' : avg < 3500 ? 'scooter' : avg < 15000 ? 'motorcycle' : 'driving') : els.vehicle.value;
+  const profile = ['walking', 'cycling', 'scooter'].includes(mode) ? 'cycling' : 'driving';
+  const coords = [[me.lng, me.lat], ...targets.map((t) => [t.lng, t.lat])].map((p) => `${p[0]},${p[1]}`);
+
+  const res = await fetch(routeUrl(profile, coords));
+  const body = await res.json();
+  const route = body.routes?.[0] || body.trips?.[0];
+  if (!route) return setStatus('No route found.', true);
+
+  if (routeLayer) mapManager.map.removeLayer(routeLayer);
+  routeLayer = L.geoJSON(route.geometry, { style: { color: '#38f3ff', weight: 4 } }).addTo(mapManager.map);
+  if (!quiet) mapManager.map.fitBounds(routeLayer.getBounds().pad(0.2));
+
+  const steps = (route.legs || []).flatMap((leg) => leg.steps || []);
+  latestRoute = steps;
+  els.navSteps.innerHTML = '';
+  steps.slice(0, 20).forEach((s, i) => {
+    const li = document.createElement('li');
+    const text = `${s.instruction || `${s.maneuver?.type || 'Go'} ${s.maneuver?.modifier || 'ahead'}`} for ${fmtDistance(s.distance)}`;
+    li.textContent = `${i + 1}. ${text}`;
+    els.navSteps.appendChild(li);
+  });
+
+  const eta = estimateArrivalSeconds(route.distance, analytics.speedKmh(userId) / 3.6 || 8);
+  els.routeInfo.textContent = `${mode} • ${fmtDistance(route.distance)} • ETA ${fmtTime(eta || route.duration)}`;
+
+  // directional compass toward first selected target
+  const first = targets[0];
+  const br = bearingDegrees(me, first);
+  mapManager.drawCompass(me, first, br);
+};
+
+const renderSnapshot = (snapshot) => {
+  const users = snapshot.users || [];
+  const distances = snapshot.distances || [];
+  lastUsers = users;
+  analytics.ingestUsers(users);
+
+  els.people.innerHTML = '';
+  users.forEach((u) => {
+    const li = document.createElement('li');
+    const ll = typeof u.lat === 'number' ? `${u.lat.toFixed(5)}, ${u.lng.toFixed(5)}` : 'waiting GPS';
+    li.textContent = `${u.name}${u.id === userId ? ' (You)' : ''} • ${ll}`;
+    els.people.appendChild(li);
+
+    const sos = !!u.sosUntil && u.sosUntil > Date.now();
+    mapManager.upsertUser(u, u.id === userId, sos);
+    mapManager.drawTrail(u.id, analytics.history(u.id));
+    mapManager.drawPrediction(u.id, predictNextPositions(analytics.history(u.id), 5));
+  });
+
+  els.distances.innerHTML = '';
+  if (!distances.length) {
+    els.distances.innerHTML = '<li>Need at least two users with active coordinates.</li>';
+  } else {
+    distances.sort((a, b) => a.meters - b.meters).forEach((d) => {
+      const li = document.createElement('li');
+      li.textContent = `${d.names[0]} ↔ ${d.names[1]}: ${fmtDistance(d.meters)} (±${Math.round(d.errorMeters || 0)} m)`;
+      els.distances.appendChild(li);
+    });
+  }
+
+  renderTargets(users);
+  mapManager.setHeatMode(heatMode, users);
+
+  const me = getMe();
+  if (me) {
+    drawSpeedometer(analytics.speedKmh(me.id));
+    drawMovementGraph(analytics.movementSeries(me.id));
+    els.speedStats.textContent = `Speed: ${analytics.speedKmh(me.id).toFixed(1)} km/h • Acc: ${analytics.acceleration(me.id).toFixed(2)} m/s² • Session distance: ${fmtDistance(analytics.totalDistance(me.id))}`;
+
+    const firstTarget = selectedTargetIds().map((id) => users.find((u) => u.id === id)).find(Boolean);
+    if (firstTarget) {
+      const pred = predictNextPositions(analytics.history(firstTarget.id), 5);
+      const last = pred[pred.length - 1];
+      if (last) {
+        const d = MovementAnalytics.haversine(me, last);
+        const eta = estimateArrivalSeconds(d, analytics.speedKmh(me.id) / 3.6 || 5);
+        els.prediction.textContent = `Predicted arrival to ${firstTarget.name}: ${fmtTime(eta)} (forecast path shown)`;
       }
+    }
 
-      updateNavigationFromPosition(lat, lng);
-    },
-    (error) => updateStatus(`Location error: ${error.message}`, true),
-    { enableHighAccuracy: true, maximumAge: 500, timeout: 10000 },
+    replay.setHistory(analytics.history(me.id));
+  }
+
+  const active = users.filter((u) => u.active);
+  const stats = analytics.groupStats(active);
+  const lb = analytics.leaderboard(users, distances);
+  els.roomAnalytics.textContent = `Avg speed: ${stats.avgSpeed.toFixed(1)} km/h • Combined distance: ${fmtDistance(stats.totalCombined)} • Active users: ${stats.activeUsers}`;
+  els.leaderboard.textContent = `Challenge: Fastest ${lb.fastest?.name || '-'} • Farthest ${lb.farthest?.name || '-'} • Closest ${lb.closestPair ? `${lb.closestPair.names[0]}-${lb.closestPair.names[1]}` : '-'}`;
+
+  const sosActive = users.some((u) => u.sosUntil && u.sosUntil > Date.now());
+  els.sosBanner.classList.toggle('hidden', !sosActive);
+
+  alerts.checkProximity(me, users, (msg) => setStatus(msg));
+
+  if (navOn && selectedTargetIds().length) buildRoute(true).catch(() => {});
+};
+
+const fetchSnapshot = async () => {
+  const res = await fetch(`/api/room?roomId=${encodeURIComponent(roomId)}&token=${encodeURIComponent(inviteToken)}`);
+  if (!res.ok) return;
+  renderSnapshot(await res.json());
+};
+
+const subscribe = () => {
+  if (events) events.close();
+  events = new EventSource(`/api/events?roomId=${encodeURIComponent(roomId)}&token=${encodeURIComponent(inviteToken)}`);
+  events.onopen = () => setLive('connected');
+  events.onmessage = (e) => renderSnapshot(JSON.parse(e.data));
+  events.onerror = () => {
+    setLive('reconnecting');
+    fetchSnapshot().catch(() => setLive('offline'));
+  };
+};
+
+const joinRoom = async () => {
+  const name = els.name.value.trim() || `Guest-${crypto.randomUUID().slice(0, 5)}`;
+  roomId = els.room.value.trim();
+  if (!roomId) return setStatus('Room ID required.', true);
+
+  const joined = await apiPost('/api/join', { roomId, name, deviceId: getDeviceId(), inviteToken });
+  userId = joined.userId;
+  inviteToken = joined.inviteToken;
+  localStorage.setItem(nameKey, name);
+  localStorage.setItem(sessionKey, JSON.stringify({ roomId, inviteToken }));
+
+  els.tracker.classList.remove('hidden');
+  mapManager.init(() => setStatus('Map tiles issue: switching layers can help.', true));
+
+  els.shareLink.value = joined.inviteLink;
+  els.shareBox.classList.remove('hidden');
+  history.replaceState({}, '', `/?room=${encodeURIComponent(roomId)}&token=${encodeURIComponent(inviteToken)}`);
+
+  subscribe();
+  fetchSnapshot().catch(() => {});
+  setStatus(`Joined ${roomId}`);
+};
+
+const pushLocation = async (position) => {
+  let lat = position.coords.latitude;
+  let lng = position.coords.longitude;
+  if (els.privacyBlur.checked) [lat, lng] = blurLocation(lat, lng);
+
+  await apiPost('/api/location', {
+    roomId,
+    userId,
+    lat,
+    lng,
+    accuracy: position.coords.accuracy,
+    sosUntil: isSos ? Date.now() + 60_000 : null,
+  });
+
+  updateNavigationProgress(lat, lng);
+};
+
+const startGeo = () => {
+  if (!navigator.geolocation) return setStatus('Geolocation unsupported.', true);
+  const getOptions = () => ({ enableHighAccuracy: true, maximumAge: els.batterySaver.checked ? 6000 : 1200, timeout: 12000 });
+
+  if (myWatchId) navigator.geolocation.clearWatch(myWatchId);
+  myWatchId = navigator.geolocation.watchPosition(
+    (pos) => pushLocation(pos).catch((e) => setStatus(e.message, true)),
+    (e) => setStatus(`GPS error: ${e.message}`, true),
+    getOptions(),
   );
 };
 
-const subscribeRoomStream = () => {
-  if (events) events.close();
-  events = new EventSource(`/api/events?roomId=${encodeURIComponent(roomId)}`);
-  events.onmessage = (event) => {
-    renderRoom(JSON.parse(event.data));
-  };
-  events.onerror = () => updateStatus('Live stream disconnected. Trying to reconnect...', true);
+// Replay
+replay.onFrame = (point) => {
+  mapManager.upsertUser({ id: 'replay-me', name: 'Replay', lat: point.lat, lng: point.lng }, false, false);
 };
 
-const selectedTargetIds = () => [...targetUsers.querySelectorAll('input[type="checkbox"]:checked')].map((el) => el.value);
-
-const routeUrlForTargets = (cfg, coords) => {
-  if (coords.length <= 2) {
-    return `https://router.project-osrm.org/route/v1/${cfg.profile}/${coords.map((c) => `${c[0]},${c[1]}`).join(';')}?overview=full&geometries=geojson&steps=true`; 
-  }
-
-  return `https://router.project-osrm.org/trip/v1/${cfg.profile}/${coords.map((c) => `${c[0]},${c[1]}`).join(';')}?overview=full&geometries=geojson&steps=true&source=first&roundtrip=false`;
-};
-
-const drawRoute = async (quiet = false) => {
-  const me = usersSnapshot.find((u) => u.id === userId);
-  const targets = selectedTargetIds().map((id) => usersSnapshot.find((u) => u.id === id)).filter(Boolean);
-
-  if (!me || typeof me.lat !== 'number' || targets.length === 0) {
-    routeInfo.textContent = 'Select one or more people with location for routing.';
-    return;
-  }
-
-  const coords = [[me.lng, me.lat], ...targets.map((u) => [u.lng, u.lat])];
-
-  const averageMeters =
-    targets.reduce((acc, u) => acc + haversine({ lat: me.lat, lng: me.lng }, { lat: u.lat, lng: u.lng }), 0) /
-    Math.max(1, targets.length);
-
-  const selectedMode = vehicleMode.value === 'auto' ? chooseVehicle(averageMeters) : vehicleMode.value;
-  const cfg = PROFILE_MAP[selectedMode] || PROFILE_MAP.driving;
-
-  try {
-    const response = await fetch(routeUrlForTargets(cfg, coords));
-    const body = await response.json();
-    const route = body?.routes?.[0] || body?.trips?.[0];
-    if (!route) throw new Error('No route found');
-
-    if (routeLayer) map.removeLayer(routeLayer);
-    routeLayer = L.geoJSON(route.geometry, { style: { color: '#38f3ff', weight: 5, opacity: 0.9 } }).addTo(map);
-
-    const adjustedDuration = route.duration * cfg.factor;
-    routeInfo.textContent = `${cfg.label}${vehicleMode.value === 'auto' ? ' (auto-picked)' : ''} • Distance: ${formatDistance(route.distance)} • ETA: ${formatDuration(adjustedDuration)} • Stops: ${targets.length}`;
-
-    const legs = route.legs || [];
-    const steps = legs.flatMap((leg) => leg.steps || []).slice(0, 20);
-    latestRoute = { steps };
-    activeStepIndex = 0;
-
-    navSteps.innerHTML = '';
-    steps.forEach((step, i) => {
-      const li = document.createElement('li');
-      li.textContent = `${i + 1}. ${instructionFromStep(step)}`;
-      navSteps.appendChild(li);
-    });
-
-    if (!quiet) map.fitBounds(routeLayer.getBounds().pad(0.15));
-  } catch (error) {
-    routeInfo.textContent = `Route service unavailable: ${error.message}`;
-  }
-};
-
-const startNavigation = () => {
-  if (!latestRoute?.steps?.length) {
-    routeInfo.textContent = 'Build a route first, then start navigation.';
-    return;
-  }
-
-  navigating = true;
-  activeStepIndex = 0;
-  const firstText = instructionFromStep(latestRoute.steps[0]);
-  routeInfo.textContent = `Navigation started • ${firstText}`;
-  speak(`Navigation started. ${firstText}`);
-};
-
-const stopNavigation = () => {
-  navigating = false;
-  activeStepIndex = 0;
-  window.speechSynthesis?.cancel?.();
-  routeInfo.textContent = 'Navigation stopped.';
-};
-
-joinForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const name = document.getElementById('name-input').value.trim();
-  roomId = document.getElementById('room-input').value.trim();
-
-  if (!name || !roomId) return updateStatus('Name and room ID are required.', true);
-
-  try {
-    const joined = await apiPost('/api/join', { roomId, name, deviceId: getDeviceId() });
-    roomId = joined.roomId;
-    userId = joined.userId;
-
-    trackerSection.classList.remove('hidden');
-    roomTitle.textContent = `Room: ${roomId}`;
-
-    if (!ensureMap()) return;
-    setTimeout(() => map.invalidateSize(), 50);
-
-    if (typeof myWatchId === 'number') navigator.geolocation.clearWatch(myWatchId);
-    subscribeRoomStream();
-    beginLocationTracking();
-    updateStatus(`Joined room ${roomId} as ${joined.name}`);
-  } catch (error) {
-    updateStatus(error.message, true);
-  }
+els.joinForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  joinRoom().then(startGeo).catch((err) => setStatus(err.message, true));
 });
-
-recenterBtn.addEventListener('click', () => fitAllUsers(usersSnapshot));
-routeBtn.addEventListener('click', () => mapReady && drawRoute());
-vehicleMode.addEventListener('change', () => mapReady && selectedTargetIds().length > 0 && drawRoute(true));
-startNavBtn.addEventListener('click', startNavigation);
-stopNavBtn.addEventListener('click', stopNavigation);
-
-installBtn.addEventListener('click', async () => {
-  if (!deferredInstallPrompt) {
-    updateStatus('Install prompt is not available on this device/browser.', true);
-    return;
-  }
+els.routeBtn.addEventListener('click', () => buildRoute().catch((e) => setStatus(e.message, true)));
+els.startNav.addEventListener('click', () => {
+  navOn = true;
+  if (latestRoute[0]) speak(latestRoute[0].instruction || 'Navigation started');
+});
+els.stopNav.addEventListener('click', () => {
+  navOn = false;
+  speechSynthesis.cancel();
+});
+els.recenter.addEventListener('click', () => mapManager.fitUsers(lastUsers));
+els.selectAll.addEventListener('click', () => {
+  [...els.targetUsers.querySelectorAll('input[type="checkbox"]')].forEach((c) => (c.checked = true));
+  updateTargetCount();
+});
+els.clearAll.addEventListener('click', () => {
+  [...els.targetUsers.querySelectorAll('input[type="checkbox"]')].forEach((c) => (c.checked = false));
+  updateTargetCount();
+});
+els.copy.addEventListener('click', async () => {
+  await navigator.clipboard.writeText(els.shareLink.value);
+  setStatus('Invite link copied.');
+});
+els.wa.addEventListener('click', () => {
+  const txt = encodeURIComponent(`Join my private room: ${els.shareLink.value}`);
+  window.open(`https://wa.me/?text=${txt}`, '_blank');
+});
+els.install.addEventListener('click', async () => {
+  if (!deferredInstallPrompt) return setStatus('Install not available.', true);
   deferredInstallPrompt.prompt();
-  const choice = await deferredInstallPrompt.userChoice;
+  await deferredInstallPrompt.userChoice;
   deferredInstallPrompt = null;
-  installBtn.classList.add('hidden');
-  if (choice.outcome !== 'accepted') {
-    updateStatus('Install cancelled by user.', true);
+  els.install.classList.add('hidden');
+});
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  els.install.classList.remove('hidden');
+});
+els.theme.addEventListener('click', () => {
+  document.body.classList.toggle('light');
+  localStorage.setItem(themeKey, document.body.classList.contains('light') ? 'light' : 'dark');
+});
+if (localStorage.getItem(themeKey) === 'light') document.body.classList.add('light');
+els.heat.addEventListener('click', () => {
+  heatMode = !heatMode;
+  mapManager.setHeatMode(heatMode, lastUsers);
+});
+els.radius.addEventListener('change', () => alerts.setRadius(Number(els.radius.value)));
+els.soundAlert.addEventListener('change', () => alerts.setSound(els.soundAlert.checked));
+els.replayPlay.addEventListener('click', () => replay.play());
+els.replayStop.addEventListener('click', () => replay.stop());
+els.sosBtn.addEventListener('click', () => {
+  isSos = true;
+  setTimeout(() => { isSos = false; }, 60_000);
+  setStatus('SOS active for 60 seconds', true);
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) els.batterySaver.checked = true;
+});
+els.batterySaver.addEventListener('change', startGeo);
+
+window.addEventListener('online', () => setLive('connected'));
+window.addEventListener('offline', () => setLive('offline'));
+
+const restore = () => {
+  const params = new URLSearchParams(location.search);
+  let room = params.get('room') || '';
+  let token = params.get('token') || '';
+  if (room && /^https?:\/\//i.test(room)) {
+    try {
+      const nested = new URL(room);
+      room = nested.searchParams.get('room') || room;
+      token = token || nested.searchParams.get('token') || '';
+    } catch {}
   }
-});
 
+  if (!room || !token) {
+    try {
+      const last = JSON.parse(localStorage.getItem(sessionKey) || 'null');
+      room = room || last?.roomId || '';
+      token = token || last?.inviteToken || '';
+    } catch {}
+  }
 
-window.addEventListener('beforeunload', () => {
-  if (roomId && userId && navigator.sendBeacon) navigator.sendBeacon('/api/leave', JSON.stringify({ roomId, userId }));
-  window.speechSynthesis?.cancel?.();
-});
+  const prefName = localStorage.getItem(nameKey);
+  if (prefName) els.name.value = prefName;
 
-updateStatus('Ready. Enter a room ID and click Enter Room.');
+  if (room) {
+    els.room.value = room;
+    roomId = room;
+  }
+  if (token) inviteToken = token;
+
+  if (room && token) {
+    joinRoom().then(startGeo).catch((e) => setStatus(`Auto-join failed: ${e.message}`, true));
+  }
+};
+
+setLive(navigator.onLine ? 'connected' : 'offline');
+setStatus('Ready. Join room to start.');
+restore();
