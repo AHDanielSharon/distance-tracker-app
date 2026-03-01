@@ -1,0 +1,16 @@
+{
+  "name": "Neon Distance Tracker",
+  "short_name": "DistanceTrack",
+  "description": "Track people in rooms with live distance, routes, and voice navigation.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#070812",
+  "theme_color": "#0e142c",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
