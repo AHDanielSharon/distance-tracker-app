@@ -39,6 +39,7 @@ let autoJoinAttempted = false;
 const markers = new Map();
 const deviceIdKey = 'distance-tracker-device-id';
 const preferredNameKey = 'distance-tracker-preferred-name';
+const sessionKey = 'distance-tracker-last-session';
 
 const PROFILE_MAP = {
   driving: { profile: 'driving', factor: 1, label: 'Car' },
@@ -95,6 +96,13 @@ if (linkedToken) inviteToken = linkedToken;
 const storedName = localStorage.getItem(preferredNameKey) || '';
 if (storedName) {
   nameInput.value = storedName;
+}
+
+let rememberedSession = null;
+try {
+  rememberedSession = JSON.parse(localStorage.getItem(sessionKey) || 'null');
+} catch {
+  rememberedSession = null;
 }
 
 if ('serviceWorker' in navigator) {
@@ -473,6 +481,8 @@ const joinCurrentRoom = async () => {
   userId = joined.userId;
   inviteToken = joined.inviteToken || inviteToken;
 
+  localStorage.setItem(sessionKey, JSON.stringify({ roomId, inviteToken }));
+
   if (joined.inviteLink) {
     shareLinkInput.value = joined.inviteLink;
     shareLinkBox.classList.remove('hidden');
@@ -537,12 +547,14 @@ installBtn.addEventListener('click', async () => {
 });
 
 window.addEventListener('beforeunload', () => {
-  if (roomId && userId && navigator.sendBeacon) navigator.sendBeacon('/api/leave', JSON.stringify({ roomId, userId }));
+  // Keep room session on refresh/reopen so users do not drop to blank state.
   window.speechSynthesis?.cancel?.();
 });
 
 window.addEventListener('load', async () => {
-  if (linkedRoomId && linkedToken && !autoJoinAttempted) {
+  if (autoJoinAttempted) return;
+
+  if (linkedRoomId && linkedToken) {
     autoJoinAttempted = true;
     if (!nameInput.value.trim()) {
       nameInput.value = `Guest-${crypto.randomUUID().slice(0, 6)}`;
@@ -552,6 +564,23 @@ window.addEventListener('load', async () => {
       updateStatus('Joined directly from private invite link.');
     } catch (error) {
       updateStatus(`Invite link join failed: ${error.message}`, true);
+    }
+    return;
+  }
+
+  if (rememberedSession?.roomId && rememberedSession?.inviteToken) {
+    autoJoinAttempted = true;
+    roomInput.value = rememberedSession.roomId;
+    inviteToken = rememberedSession.inviteToken;
+    if (!nameInput.value.trim()) {
+      nameInput.value = `Guest-${crypto.randomUUID().slice(0, 6)}`;
+    }
+    try {
+      await joinCurrentRoom();
+      updateStatus('Restored your last room session.');
+    } catch (error) {
+      localStorage.removeItem(sessionKey);
+      updateStatus(`Could not restore last room: ${error.message}`, true);
     }
   }
 });

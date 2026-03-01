@@ -225,11 +225,14 @@ const server = http.createServer(async (req, res) => {
 
       const room = existingRoom || getOrCreateRoom(roomId, inviteToken);
       let user = null;
+      let matchedByDevice = false;
+      let matchedByName = false;
 
       if (deviceId) {
         for (const existing of room.users.values()) {
           if (existing.deviceId === deviceId) {
             user = existing;
+            matchedByDevice = true;
             break;
           }
         }
@@ -240,6 +243,7 @@ const server = http.createServer(async (req, res) => {
         for (const existing of room.users.values()) {
           if (normalizeName(existing.name) === wantedName) {
             user = existing;
+            matchedByName = true;
             break;
           }
         }
@@ -260,11 +264,14 @@ const server = http.createServer(async (req, res) => {
         };
         room.users.set(userId, user);
       } else {
+        const isTakeover = matchedByName && !matchedByDevice;
         user.deviceId = deviceId || user.deviceId || null;
         user.name = name;
-        user.lat = null;
-        user.lng = null;
-        user.accuracy = null;
+        if (isTakeover) {
+          user.lat = null;
+          user.lng = null;
+          user.accuracy = null;
+        }
         user.active = true;
         user.updatedAt = Date.now();
         user.lastSeenAt = Date.now();
