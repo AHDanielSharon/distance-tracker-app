@@ -25,6 +25,8 @@ button { cursor: pointer; font-weight: 700; }
 #map { width: 100%; min-height: 520px; border-radius: 14px; border: 1px solid rgba(56, 243, 255, 0.42); overflow: hidden; }
 .route-box { border: 1px solid rgba(56, 243, 255, 0.35); border-radius: 12px; padding: 12px; background: rgba(8, 14, 36, 0.7); display: grid; gap: 10px; }
 .route-controls { display: grid; grid-template-columns: 1fr auto auto auto; gap: 8px; }
+.target-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+#target-count { color: #b9c9eb; font-size: 0.9rem; }
 .target-users { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px; }
 .target-item { display: flex; align-items: center; gap: 8px; border: 1px solid rgba(56, 243, 255, 0.25); border-radius: 8px; padding: 6px 8px; }
 .nav-steps { margin: 0; padding-left: 18px; max-height: 170px; overflow: auto; }

@@ -19,6 +19,9 @@ const copyLinkBtn = document.getElementById('copy-link-btn');
 const whatsappShareBtn = document.getElementById('whatsapp-share-btn');
 const nameInput = document.getElementById('name-input');
 const roomInput = document.getElementById('room-input');
+const selectAllBtn = document.getElementById('select-all-btn');
+const clearAllBtn = document.getElementById('clear-all-btn');
+const targetCount = document.getElementById('target-count');
 
 let roomId = '';
 let userId = '';
@@ -276,14 +279,17 @@ const fitAllUsers = (users) => {
 };
 
 const renderTargetUsers = (users) => {
-  const selected = new Set([...targetUsers.querySelectorAll('input[type="checkbox"]:checked')].map((el) => el.value));
+  const prevSelected = new Set(selectedTargetIds());
   targetUsers.innerHTML = '';
   const candidates = users.filter((u) => u.id !== userId && typeof u.lat === 'number' && typeof u.lng === 'number');
 
   if (candidates.length === 0) {
     targetUsers.textContent = 'No route targets available yet.';
+    updateTargetCount();
     return;
   }
+
+  const shouldAutoSelectAll = prevSelected.size === 0;
 
   candidates.forEach((user) => {
     const label = document.createElement('label');
@@ -291,10 +297,13 @@ const renderTargetUsers = (users) => {
     const input = document.createElement('input');
     input.type = 'checkbox';
     input.value = user.id;
-    if (selected.has(user.id)) input.checked = true;
+    input.checked = shouldAutoSelectAll || prevSelected.has(user.id);
+    input.addEventListener('change', updateTargetCount);
     label.append(input, document.createTextNode(` ${user.name}${user.active ? '' : ` (last seen ${formatLastSeen(user.lastSeenAt)})`}`));
     targetUsers.appendChild(label);
   });
+
+  updateTargetCount();
 };
 
 const renderRoom = ({ users, distances }) => {
@@ -387,7 +396,20 @@ const subscribeRoomStream = () => {
   fetchSnapshot();
 };
 
+
 const selectedTargetIds = () => [...targetUsers.querySelectorAll('input[type="checkbox"]:checked')].map((el) => el.value);
+
+const updateTargetCount = () => {
+  const checked = selectedTargetIds().length;
+  targetCount.textContent = `${checked} selected`;
+};
+
+const setAllTargetCheckboxes = (checked) => {
+  [...targetUsers.querySelectorAll('input[type="checkbox"]')].forEach((el) => {
+    el.checked = checked;
+  });
+  updateTargetCount();
+};
 
 const routeUrlForTargets = (cfg, coords) => {
   if (coords.length <= 2) {
@@ -401,8 +423,13 @@ const drawRoute = async (quiet = false) => {
   const me = usersSnapshot.find((u) => u.id === userId);
   const targets = selectedTargetIds().map((id) => usersSnapshot.find((u) => u.id === id)).filter(Boolean);
 
-  if (!me || typeof me.lat !== 'number' || targets.length === 0) {
-    routeInfo.textContent = 'Select one or more people with location for routing.';
+  if (!me || typeof me.lat !== 'number') {
+    routeInfo.textContent = 'Your live location is not available yet. Please enable GPS.';
+    return;
+  }
+
+  if (targets.length === 0) {
+    routeInfo.textContent = 'Select at least one person from the list above to build route.';
     return;
   }
 
@@ -532,6 +559,9 @@ whatsappShareBtn.addEventListener('click', () => {
   window.open(`https://wa.me/?text=${message}`, '_blank');
 });
 
+selectAllBtn.addEventListener('click', () => setAllTargetCheckboxes(true));
+clearAllBtn.addEventListener('click', () => setAllTargetCheckboxes(false));
+
 installBtn.addEventListener('click', async () => {
   if (!deferredInstallPrompt) {
     updateStatus('Install prompt is not available on this device/browser.', true);
@@ -563,7 +593,11 @@ window.addEventListener('load', async () => {
       await joinCurrentRoom();
       updateStatus('Joined directly from private invite link.');
     } catch (error) {
-      updateStatus(`Invite link join failed: ${error.message}`, true);
+      updateStatus(`Invite link join failed: ${error.message}. You can still join manually.`, true);
+      inviteToken = '';
+      roomInput.readOnly = false;
+      roomInput.title = '';
+      shareLinkBox.classList.add('hidden');
     }
     return;
   }
@@ -580,7 +614,10 @@ window.addEventListener('load', async () => {
       updateStatus('Restored your last room session.');
     } catch (error) {
       localStorage.removeItem(sessionKey);
-      updateStatus(`Could not restore last room: ${error.message}`, true);
+      inviteToken = '';
+      roomInput.readOnly = false;
+      roomInput.title = '';
+      updateStatus(`Could not restore last room: ${error.message}. Join manually.`, true);
     }
   }
 });
