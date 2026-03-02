@@ -26,6 +26,7 @@ const json = (res, status, payload) => {
 const sanitizeRoomId = (value) => String(value || '').trim().slice(0, 32);
 const sanitizeName = (value) => String(value || '').trim().slice(0, 24);
 const sanitizeDeviceId = (value) => String(value || '').trim().slice(0, 128);
+const normalizeName = (value) => sanitizeName(value).toLowerCase();
 const sanitizeInviteToken = (value) => String(value || '').trim().slice(0, 256);
 const generateInviteToken = () => crypto.randomBytes(24).toString('base64url');
 
@@ -234,6 +235,16 @@ const server = http.createServer(async (req, res) => {
       if (deviceId) {
         for (const existing of room.users.values()) {
           if (existing.deviceId === deviceId) {
+            user = existing;
+            break;
+          }
+        }
+      }
+
+      if (!user) {
+        const wantedName = normalizeName(name);
+        for (const existing of room.users.values()) {
+          if (normalizeName(existing.name) === wantedName) {
             user = existing;
             break;
           }
