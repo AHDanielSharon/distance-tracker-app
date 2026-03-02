@@ -1,0 +1,58 @@
+openapi: 3.1.0
+info:
+  title: Aether Nexus Unified API
+  version: 0.1.0
+servers:
+  - url: https://api.aethernexus.example
+paths:
+  /v1/auth/token:
+    post:
+      summary: Exchange OAuth2 authorization grant for tokens
+      responses:
+        '200':
+          description: Token response
+  /v1/media/assets:
+    post:
+      summary: Create upload session for video/image/audio assets
+      responses:
+        '201':
+          description: Asset created
+  /v1/feed/home:
+    get:
+      summary: Retrieve AI-personalized cross-domain feed
+      parameters:
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { description: Feed page }
+  /v1/messages/channels/{channelId}/send:
+    post:
+      summary: Send E2EE envelope to channel
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '202': { description: Accepted }
+  /v1/location/routes/optimize:
+    post:
+      summary: Optimize route with traffic, safety, and preference signals
+      responses:
+        '200': { description: Route options }
+  /v1/moderation/decision:
+    post:
+      summary: Policy decision endpoint for multimodal moderation review
+      responses:
+        '200': { description: Decision }
+  /v1/monetization/tip:
+    post:
+      summary: Tip a creator with wallet-backed payment
+      responses:
+        '202': { description: Transfer initiated }
+  /v1/analytics/realtime:
+    get:
+      summary: Stream near-real-time creator and system metrics snapshot
+      responses:
+        '200': { description: Metrics snapshot }

@@ -1,0 +1,54 @@
+version: '3.9'
+
+x-service-template: &service-template
+  restart: unless-stopped
+  networks: [core]
+  environment:
+    - NODE_ENV=production
+    - KAFKA_BROKERS=kafka:9092
+    - REDIS_URL=redis://redis:6379
+
+services:
+  api-gateway:
+    <<: *service-template
+    build: ../services/api-gateway
+    environment:
+      - SERVICE_NAME=api-gateway
+      - PORT=8080
+    ports: ['8080:8080']
+
+  auth-service: { <<: *service-template, build: ../services/auth-service, environment: [SERVICE_NAME=auth-service, PORT=8080] }
+  media-service: { <<: *service-template, build: ../services/media-service, environment: [SERVICE_NAME=media-service, PORT=8080] }
+  realtime-service: { <<: *service-template, build: ../services/realtime-service, environment: [SERVICE_NAME=realtime-service, PORT=8080] }
+  messaging-service: { <<: *service-template, build: ../services/messaging-service, environment: [SERVICE_NAME=messaging-service, PORT=8080] }
+  video-pipeline: { <<: *service-template, build: ../services/video-pipeline, environment: [SERVICE_NAME=video-pipeline, PORT=8080] }
+  ai-inference-service: { <<: *service-template, build: ../services/ai-inference-service, environment: [SERVICE_NAME=ai-inference-service, PORT=8080] }
+  recommendation-service: { <<: *service-template, build: ../services/recommendation-service, environment: [SERVICE_NAME=recommendation-service, PORT=8080] }
+  location-intelligence-service: { <<: *service-template, build: ../services/location-intelligence-service, environment: [SERVICE_NAME=location-intelligence-service, PORT=8080] }
+  notification-service: { <<: *service-template, build: ../services/notification-service, environment: [SERVICE_NAME=notification-service, PORT=8080] }
+  monetization-service: { <<: *service-template, build: ../services/monetization-service, environment: [SERVICE_NAME=monetization-service, PORT=8080] }
+  moderation-service: { <<: *service-template, build: ../services/moderation-service, environment: [SERVICE_NAME=moderation-service, PORT=8080] }
+  analytics-service: { <<: *service-template, build: ../services/analytics-service, environment: [SERVICE_NAME=analytics-service, PORT=8080] }
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    networks: [core]
+
+  kafka:
+    image: bitnami/kafka:3.7
+    environment:
+      - KAFKA_CFG_NODE_ID=1
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+      - ALLOW_PLAINTEXT_LISTENER=yes
+    networks: [core]
+
+networks:
+  core:
+    driver: bridge

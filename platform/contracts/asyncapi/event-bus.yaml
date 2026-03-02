@@ -1,0 +1,64 @@
+asyncapi: 3.0.0
+info:
+  title: Aether Nexus Event Bus
+  version: 0.1.0
+channels:
+  user.activity.v1:
+    address: user.activity.v1
+    messages:
+      activity:
+        payload:
+          type: object
+          properties:
+            userId: { type: string }
+            signalType: { type: string }
+            score: { type: number }
+  media.processed.v1:
+    address: media.processed.v1
+    messages:
+      mediaProcessed:
+        payload:
+          type: object
+          properties:
+            assetId: { type: string }
+            variants: { type: array, items: { type: object } }
+            transcriptUri: { type: string }
+  messaging.delivery.v1:
+    address: messaging.delivery.v1
+    messages:
+      delivery:
+        payload:
+          type: object
+          properties:
+            channelId: { type: string }
+            messageId: { type: string }
+            status: { type: string }
+  moderation.alert.v1:
+    address: moderation.alert.v1
+    messages:
+      moderationAlert:
+        payload:
+          type: object
+          properties:
+            contentId: { type: string }
+            severity: { type: string }
+            reason: { type: string }
+  location.traffic.v1:
+    address: location.traffic.v1
+    messages:
+      trafficUpdate:
+        payload:
+          type: object
+          properties:
+            tileId: { type: string }
+            congestionIndex: { type: number }
+            timestamp: { type: string, format: date-time }
+operations:
+  consumeUserActivity:
+    action: receive
+    channel:
+      $ref: '#/channels/user.activity.v1'
+  publishMediaProcessed:
+    action: send
+    channel:
+      $ref: '#/channels/media.processed.v1'

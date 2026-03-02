@@ -1,0 +1,7 @@
+service:
+  name: realtime-service
+  tier: core
+resilience:
+  timeoutMs: 1500
+  retries: 2
+  circuitBreaker: true
