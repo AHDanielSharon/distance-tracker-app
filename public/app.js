@@ -100,6 +100,15 @@ const fmtTime = (s) => {
   return `${Math.floor(min / 60)}h ${min % 60}m`;
 };
 
+
+const fmtLastSeen = (ts) => {
+  if (!ts) return 'unknown';
+  const sec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (sec < 30) return 'now';
+  if (sec < 60) return `${sec}s ago`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+  return `${Math.floor(sec / 3600)}h ago`;
+};
 const setLive = (state) => {
   els.live.className = `live-indicator ${
     state === 'connected' ? 'live-connected' : state === 'reconnecting' ? 'live-reconnecting' : 'live-offline'
@@ -273,13 +282,16 @@ const renderSnapshot = (snapshot) => {
   users.forEach((u) => {
     const li = document.createElement('li');
     const ll = typeof u.lat === 'number' ? `${u.lat.toFixed(5)}, ${u.lng.toFixed(5)}` : 'waiting GPS';
-    li.textContent = `${u.name}${u.id === userId ? ' (You)' : ''} • ${ll}`;
+    const state = u.active ? 'Online' : `Last seen ${fmtLastSeen(u.lastSeenAt)}`;
+    li.textContent = `${u.name}${u.id === userId ? ' (You)' : ''} • ${state} • ${ll}`;
     els.people.appendChild(li);
 
     const sos = !!u.sosUntil && u.sosUntil > Date.now();
     mapManager.upsertUser(u, u.id === userId, sos);
-    mapManager.drawTrail(u.id, analytics.history(u.id));
-    mapManager.drawPrediction(u.id, predictNextPositions(analytics.history(u.id), 5));
+    const serverTrack = Array.isArray(u.track) ? u.track : [];
+    const history = serverTrack.length ? serverTrack : analytics.history(u.id);
+    mapManager.drawTrail(u.id, history);
+    mapManager.drawPrediction(u.id, predictNextPositions(history, 5));
   });
 
   els.distances.innerHTML = '';
@@ -319,7 +331,7 @@ const renderSnapshot = (snapshot) => {
   const active = users.filter((u) => u.active);
   const stats = analytics.groupStats(active);
   const lb = analytics.leaderboard(users, distances);
-  els.roomAnalytics.textContent = `Avg speed: ${stats.avgSpeed.toFixed(1)} km/h • Combined distance: ${fmtDistance(stats.totalCombined)} • Active users: ${stats.activeUsers}`;
+  els.roomAnalytics.textContent = `Avg speed: ${stats.avgSpeed.toFixed(1)} km/h • Combined distance: ${fmtDistance(stats.totalCombined)} • Online users: ${stats.activeUsers}`;
   els.leaderboard.textContent = `Challenge: Fastest ${lb.fastest?.name || '-'} • Farthest ${lb.farthest?.name || '-'} • Closest ${lb.closestPair ? `${lb.closestPair.names[0]}-${lb.closestPair.names[1]}` : '-'}`;
 
   const sosActive = users.some((u) => u.sosUntil && u.sosUntil > Date.now());
@@ -424,7 +436,7 @@ els.startNav.addEventListener('click', () => {
 });
 els.stopNav.addEventListener('click', () => {
   navOn = false;
-  speechSynthesis.cancel();
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
 });
 els.recenter.addEventListener('click', () => mapManager.fitUsers(lastUsers));
 els.selectAll.addEventListener('click', () => {

@@ -94,6 +94,11 @@ const loadStore = () => {
           updatedAt: user.updatedAt || Date.now(),
           lastSeenAt: user.lastSeenAt || Date.now(),
           active: false,
+          track: Array.isArray(user.track)
+            ? user.track
+                .filter((p) => typeof p?.lat === 'number' && typeof p?.lng === 'number')
+                .slice(-2000)
+            : [],
         });
       }
       rooms.set(roomId, room);
@@ -105,7 +110,12 @@ const loadStore = () => {
 
 const buildSnapshot = (roomId) => {
   const room = rooms.get(roomId);
-  const users = room ? [...room.users.values()] : [];
+  const users = room
+    ? [...room.users.values()].map((user) => ({
+        ...user,
+        active: Boolean(user.active) && Date.now() - (user.lastSeenAt || 0) <= 120000,
+      }))
+    : [];
   const distances = [];
 
   for (let i = 0; i < users.length; i += 1) {
@@ -263,6 +273,7 @@ const server = http.createServer(async (req, res) => {
           updatedAt: Date.now(),
           lastSeenAt: Date.now(),
           active: true,
+          track: [],
         };
         room.users.set(userId, user);
       } else {
@@ -310,6 +321,9 @@ const server = http.createServer(async (req, res) => {
       user.updatedAt = Date.now();
       user.lastSeenAt = Date.now();
       user.active = true;
+      if (!Array.isArray(user.track)) user.track = [];
+      user.track.push({ lat, lng, ts: user.updatedAt });
+      if (user.track.length > 2000) user.track.splice(0, user.track.length - 2000);
 
       saveStore();
       json(res, 200, { ok: true });
